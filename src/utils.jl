@@ -1,4 +1,4 @@
-sitepos(s::Site)::Int64 = parse(Int64, match(r"[ln]=(\d+)", join(tags(s)))[1])
+sitepos(s::Index)::Int64 = parse(Int64, match(r"[ln]=(\d+)", join(tags(s)))[1])
 
 
 function logpurity(ρ::MPO)::Float64
@@ -82,7 +82,7 @@ function apply!(gates::Vector{ITensor}, ψ::MPO; kwargs...)
 
 end
 
-function extractsites(ψ::ITensors.AbstractMPS)::Vector{Index{Int64}}
+function extractsites(ψ::ITensors.AbstractMPS)::Vector{<:Index}
     sites = Index{Int64}[]
     for d in ψ.data
         ix = inds(d)
@@ -223,8 +223,8 @@ const σhatDict = Dict(
 )
 
 sitetype(ρ::ITensors.AbstractMPS) = sitetype(siteinds(first, ρ))
-sitetype(s::ITensor) = sitetype(Site[inds(s)...])
-function sitetype(s::Union{Site, Vector{Site}})
+sitetype(s::ITensor) = sitetype(Index[inds(s)...])
+function sitetype(s::Union{<:Index, Vector{<:Index}})
     for st in keys(σhatDict)
         if hastags(s, st)
             return String(st)
@@ -240,7 +240,7 @@ function convertToPauli(ρ::MPO; makereal=true)::MPS
     convertToPauli(ρ, μ; makereal)
 end
 
-function convertToPauli(ρ::MPO, μ::Vector{Site}; makereal=true)::MPS
+function convertToPauli(ρ::MPO, μ::Vector{<:Index}; makereal=true)::MPS
     s = siteinds(ρ)
 
     MPS( map(1:length(ρ)) do i
@@ -258,7 +258,7 @@ end
 
 convertToSpin(ρ::MPS)::MPO = convertToSpin(ρ, siteinds( paulidimdictrev[ dim( siteinds(ρ)[1] ) ], length(ρ) ) )
 
-function convertToSpin(ρ::MPS, s::Vector{Site})::MPO
+function convertToSpin(ρ::MPS, s::Vector{<:Index})::MPO
     # ρ = truncate(ρ; cutoff=1e-16) # this is necessary for convertToPauli to accurately make a Real tensor network
     μ = siteinds(ρ)
 
@@ -271,7 +271,7 @@ function convertToSpin(ρ::MPS, s::Vector{Site})::MPO
 end
 
 
-function convertToPauli(Ts::Vector{ITensor}, pauliSites::Vector{Site})::Vector{ITensor}
+function convertToPauli(Ts::Vector{ITensor}, pauliSites::Vector{<:Index})::Vector{ITensor}
     map(Ts) do T
 
         if isempty(inds(T)) return T end
@@ -303,7 +303,7 @@ function convertToPauli(Ts::Vector{ITensor}, pauliSites::Vector{Site})::Vector{I
         real(U' * T * conj.(U))
     end
 end
-convertToPauli(T::ITensor, pauliSites::Vector{Site})::ITensor = convertToPauli([T], pauliSites)[1]
+convertToPauli(T::ITensor, pauliSites::Vector{<:Index})::ITensor = convertToPauli([T], pauliSites)[1]
 
 """Take a vector of Pauli operators and add identities such that their support is the same"""
 function addIdentities(ts)
@@ -342,7 +342,7 @@ function _localop(ρ::ITensors.AbstractMPS, Os::Vector{ITensor})::Vector{Float64
 end
 
 """ Find the expectation of a local operator """
-localop(ρ::MPO, Os::Vector{ITensor})::Vector{Float64} = ₗ_localop(ρ, Os)
+localop(ρ::MPO, Os::Vector{ITensor})::Vector{Float64} = _localop(ρ, Os)
 
 function localop(ρ::MPS, Os::Vector{ITensor})::Vector{Float64}
     if sitetype(Os[1]) != "Pauli"
@@ -354,7 +354,16 @@ function localop(ρ::MPS, Os::Vector{ITensor})::Vector{Float64}
     _localop(ρ, Os)
 end
 #localop(ρ::MPS, Os::Vector{ITensor}) = localop(convertToSpin(ρ, unioninds(Os...; plev=0)), Os)
-#
+
+function bonddim(ρ::MPS)
+    N = length(ρ)
+    χs = Array{Float64}(undef, N-1)
+    for j=1:N-1
+        χs[j] = linkdim(ρ, j)
+    end
+    χs
+end
+
 export
     extractsites,
     normalizedm!,
@@ -365,4 +374,5 @@ export
     dagger,
     spin,
     mpo2superoperator,
-    localop
+    localop,
+    bonddim

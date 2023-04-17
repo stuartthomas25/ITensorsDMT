@@ -1,6 +1,6 @@
 Base.zero(::Type{ITensor}) = ITensor(0.)
 
-function Ising(s::Vector{Site})::Vector{ITensor}
+function Ising(s::Vector{<:Index})::Vector{ITensor}
     map(1:length(s)-1) do j
         op("Sz",s[j]) * op("Sz",s[j+1])
     end
@@ -8,13 +8,13 @@ end
 
 
 
-function Trivial(s::Vector{Site})::Vector{ITensor}
+function Trivial(s::Vector{<:Index})::Vector{ITensor}
     map(1:length(s)-1) do j
         op("Id",s[j]) * op("Id",s[j+1])
     end
 end
 
-function TFIM(s::Vector{Site}; b::Union{Vector{<:Real},Real}=0.)::Vector{ITensor}
+function TFIM(s::Vector{<:Index}; b::Union{Vector{<:Real},Real}=0.)::Vector{ITensor}
     hs = ITensor[]
     N = length(s)
     if (typeof(b) <: Number) b = fill(b, N) end
@@ -38,7 +38,7 @@ function TFIM(s::Vector{Site}; b::Union{Vector{<:Real},Real}=0.)::Vector{ITensor
     hs
 end
 
-function MFIM(s::Vector{Site}; hx::Float64=1.4, hz::Float64=0.9045)::Vector{ITensor}
+function MFIM(s::Vector{<:Index}; hx::Float64=1.4, hz::Float64=0.9045)::Vector{ITensor}
     hs = ITensor[]
     N = length(s)
     for j=1:N-1
@@ -75,7 +75,7 @@ function XXX(s::Vector{Index{Int64}};J::Float64=1.0)
 end
 
 
-function infTempState(s::Vector{Site})::MPO
+function infTempState(s::Vector{<:Index})::MPO
     ρ₀ = MPO(s, ["Id" for x in s])
     for i=1:length(s)
         ρ₀[i] ./= sqrt(dim(s[1]))

@@ -44,12 +44,13 @@ function generate_liouvillian(
     IR = Tuple( prime2braket(op("Id",s), :right) for s in l)
 
     # TODO: replace this mess with mpo2superoperator function
-    hL = prime2braket(hj, :left) * IR[1] * IR[2]
-    hR = IL[1] * IL[2] * prime2braket(hj, :right)
+    hL = prime2braket(hj, :left) * (IR...)
+    hR = (IL...) * prime2braket(hj, :right)
     liouvillian = 1im * (conj(τ) * hL - τ * hR)
     # @show liouvillian
 
-    for i=(1, 2) # left and right sites of link
+    # apply noise to each site
+    for i=eachindex(l)
         s = l[i]
         Ls = dissipator(noise, s)
 
@@ -61,8 +62,8 @@ function generate_liouvillian(
             term3 = - 1/2 * IL[i] * product(LR, dagger(LR)) # note that right operators are flipped when applied
 
             I_index = i==1 ? 2 : 1 # which index not to change
-            # factor of 1/2 since each gate applies the dissipator to left and right sites
-            liouvillian += 1/2 * real(τ) * (term1 + term2 + term3) * IL[I_index] * IR[I_index]
+            # factor of 1/length(l) due to Trotterization
+            liouvillian += 1/length(l) * real(τ) * (term1 + term2 + term3) * (IL...) * (IR...)
         end
     end
 
