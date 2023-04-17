@@ -43,14 +43,13 @@ function generate_liouvillian(
     IL = Tuple( prime2braket(op("Id",s), :left)  for s in l)
     IR = Tuple( prime2braket(op("Id",s), :right) for s in l)
 
-    # TODO: replace this mess with mpo2superoperator function
-    hL = prime2braket(hj, :left) * (IR...)
-    hR = (IL...) * prime2braket(hj, :right)
+    hL = mpo2superoperator(hj, :left)
+    hR = mpo2superoperator(hj, :right)
+
     liouvillian = 1im * (conj(τ) * hL - τ * hR)
     # @show liouvillian
 
-    # apply noise to each site
-    for i=eachindex(l)
+    for i=eachindex(l) # left and right sites of link
         s = l[i]
         Ls = dissipator(noise, s)
 
@@ -61,9 +60,9 @@ function generate_liouvillian(
             term2 = - 1/2 * product(dagger(LL), LL) * IR[i]
             term3 = - 1/2 * IL[i] * product(LR, dagger(LR)) # note that right operators are flipped when applied
 
-            I_index = i==1 ? 2 : 1 # which index not to change
-            # factor of 1/length(l) due to Trotterization
-            liouvillian += 1/length(l) * real(τ) * (term1 + term2 + term3) * (IL...) * (IR...)
+            # factor of 1/length(l) since each gate applies the dissipator to left and right sites
+            re
+            liouvillian += 1/length(l) * real(τ) * (term1 + term2 + term3) * reduce(*, [IL...; IR...])
         end
     end
 
@@ -107,7 +106,7 @@ end
 
 "apply the superoperators gates and normalize"
 function dosuperstep!(ψ::MPO, gates::Vector{ITensor}; method::TruncationMethod, kwargs...)
-    s = extractsites(ψ)
+    s = siteinds(first, ψ; plev=0)
     prime2braket!(ψ)
     apply!(gates, ψ, method; kwargs...)
     braket2prime!(ψ)
@@ -115,7 +114,7 @@ end
 
 "Pauli basis"
 function dosuperstep!(ψ::MPS, gates::Vector{ITensor}; method::TruncationMethod, kwargs...)
-    s = extractsites(ψ)
+    s = siteinds(first, ψ; plev=0)
     apply!(gates, ψ, method; kwargs...)
 end
 
@@ -134,10 +133,10 @@ function time_evolve!(ψ::ITensors.AbstractMPS, ham::Vector{ITensor},
             )
 
     if length(ψ)%2==1 @warn "For best results, use system sizes in powers of 2" end
-    s = extractsites(ψ)
+    s = siteinds(first, ψ; plev=0)
 
     if hastags(s, "Pauli")
-        gates = convertToPauli(generate_gates(algo, ham, τ, noise), s)
+        gates = convertToPauli( generate_gates(algo, ham, τ, noise), s)
     else
         gates = generate_gates(algo, ham, τ, noise)
     end
@@ -173,7 +172,7 @@ function temp_evolve!(ψ::MPO, ham::Vector{ITensor}, T::Vector{Float64};
                 algo::TrotterAlgorithm = TrotterAlgorithmOrder4
                      )
 
-    s = extractsites(ψ)
+    s = siteinds(first, ψ; plev=0)
 
     β = 1 ./ T
 

@@ -85,7 +85,7 @@ end
 
 spinval(ρ::MPS, opname::String) = spinval(convertToSpin(ρ), opname)
 function spinval(ρ::MPO, opname::String)::Vector{Float64}
-    Os = [op(opname, s) for s=extractsites(ρ)]
+    Os = [op(opname, s) for s=siteinds(first, ρ; plev=0)]
     localop(ρ, Os)
 end
 
@@ -158,7 +158,7 @@ function entanglement_entropy(ψ₀::MPO, b::Int)::Float64
 end
 
 function vonneumann(ρ::MPO)
-    s = extractsites(ρ)
+    s = siteinds(first, ρ; plev=0)
     N = length(s)
     S = 0.
     for el in Iterators.product(fill([1,2], N)...)

@@ -16,6 +16,11 @@ end
 
 rank(S::Vector{Float64}, cutoff::Float64) = something( findfirst(x->x<cutoff, S), length(S) + 1) - 1
 
+"""
+Apply Density Matrix Truncation to the left-most two sites of a multi-site tensor.
+
+Lsum and Rsum are the traces of the MPO to the left and right of ϕ.
+"""
 function dmt(ϕ::ITensor, Lsum::ITensor, Rsum::ITensor; maxdim::Int64=Inf, cutoff::Float64=1e-12)::Tuple{ITensor, ITensor}
     maxdim >= 7 || throw("Max dim must be greater than or equal to 7")
 
@@ -23,7 +28,7 @@ function dmt(ϕ::ITensor, Lsum::ITensor, Rsum::ITensor; maxdim::Int64=Inf, cutof
     ns = sitepos.(sites)
     leftlink = commonind(Lsum, ϕ)
 
-    #if not the leftmost
+    #if site is the leftmost, there is no left link to consider
     Lis = isnothing(leftlink) ? IndexSet(sites[1]) : IndexSet((leftlink, sites[1]))
 
     USV = svd(ϕ, Lis...; alg="divide_and_conquer", cutoff=cutoff)
@@ -35,6 +40,10 @@ function dmt(ϕ::ITensor, Lsum::ITensor, Rsum::ITensor; maxdim::Int64=Inf, cutof
     QL, RL = qrDMT(xL)
 
     xR = Vt * Rsum
+    #if ϕ has more than two sites, trace over the extra ones
+    for s in sites[3:end]
+        xR = xR * onehot(s=>1)
+    end
     QR, RR = qrDMT(xR)
 
     M = conj(QL') * SA * QR
@@ -94,7 +103,6 @@ function apply!(gates::Vector{ITensor}, ρ::MPS, ::DMT; maxdim::Int64=64, cutoff
 
         ns = findsites(ρ, o)
         N  = length(ns)
-        @assert N==2
         ns = sort(ns)
         x = ns[1]
 
@@ -114,23 +122,30 @@ function apply!(gates::Vector{ITensor}, ρ::MPS, ::DMT; maxdim::Int64=64, cutoff
         Lsum = reduce(*, ρsums[1:ns[1]-1])
         Rsum = reduce(*, ρsums[ns[2]+1:end])
 
-        L, R = dmt(ϕ, Lsum, Rsum; maxdim, cutoff)
+        ψ = Vector{ITensor}(undef, N)
+        for n in 1:(N-1)
+            L, R = dmt(ϕ, Lsum, Rsum; maxdim, cutoff)
+            ψ[n] = L
+            Lsum = Lsum * tracetensor(L)
+            ϕ = R
+        end
+        ψ[N] = ϕ
 
-        newρ = MPS([L,R])
+        newρ = MPS(ψ)
+
+        # following ITensors/mps/abstractmps.jl:1889
         ITensors.setleftlim!(newρ, N - 1)
         ITensors.setrightlim!(newρ, N + 1)
         orthogonalize!(newρ, ns[end] - ns[1] + 1)
-
 
         ρ[ns[1]:ns[end]] = newρ
     end
 
 end
 
-export apply!
-
 
 function apply!(gates::Vector{ITensor}, ψ::ITensors.AbstractMPS, ::NaiveTruncation; kwargs...)
+    @show inds(gates[1]) inds(ψ[2])
     newψ = apply(gates, ψ; kwargs...)
     ψ.data = newψ.data
     ψ.rlim = newψ.rlim
@@ -138,3 +153,5 @@ function apply!(gates::Vector{ITensor}, ψ::ITensors.AbstractMPS, ::NaiveTruncat
 end
 
 apply!(gates::Vector{ITensor}, ψ::ITensors.AbstractMPS; kwargs...) = apply!(gates, ψ, NaiveTruncation(); kwargs...)
+
+export apply!
