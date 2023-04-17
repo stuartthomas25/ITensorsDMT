@@ -2,7 +2,7 @@ sitepos(s::Index)::Int64 = parse(Int64, match(r"[ln]=(\d+)", join(tags(s)))[1])
 
 
 function logpurity(ρ::MPO)::Float64
-    s = extractsites(ρ)
+    s = siteinds(first, ρ; plev=0)
     sum::Float64 = 0.
     prod::ITensor = ITensor(1. + 0im)
     for (x,T) in zip(s,ρ)
@@ -17,7 +17,7 @@ end
 
 
 function logtrace(ρ::MPO)::Float64
-    s = extractsites(ρ)
+    s = siteinds(first, ρ; plev=0)
     sum = 0
     prod = 1
     for (x,T) in zip(s,ρ)
@@ -31,7 +31,7 @@ end
 
 
 function trace(ρ::MPS)
-    s = extractsites(ρ)
+    s = siteinds(first, ρ; plev=0)
     prod = 1.
     for (x,T) in zip(s,ρ)
         prod *= T * state(x,1)
@@ -40,7 +40,7 @@ function trace(ρ::MPS)
 end
 
 function trace(ρ::MPO)
-    s = extractsites(ρ)
+    s = siteinds(first, ρ; plev=0)
     prod = 1.
     for (x,T) in zip(s,ρ)
         prod *= 1/sqrt(2) * T * delta(x,x')
@@ -82,17 +82,6 @@ function apply!(gates::Vector{ITensor}, ψ::MPO; kwargs...)
 
 end
 
-function extractsites(ψ::ITensors.AbstractMPS)::Vector{<:Index}
-    sites = Index{Int64}[]
-    for d in ψ.data
-        ix = inds(d)
-        s = ix[ findfirst(x->(hastags(x,"Site") & hasplev(x,0)), ix)]
-        push!(sites, s)
-    end
-    sites
-end
-
-
 function prime2braket(T::ITensor, method=:mpo)::ITensor
     T = copy(T)
     prime2braket!(T, method)
@@ -108,19 +97,24 @@ end
 oinds(sbra, sket) = Dict(:mpo => [sket; sbra], :left=> [sket; sket'], :right=> [sbra'; sbra])
 
 function prime2braket!(T::ITensor, method=:mpo)
-    ix = inds(T)
-    s = ix[ findall(x->(hastags(x,"Site") & hasplev(x, 0)), ix) ]
-    s = [x for x in s]
+    s = collect( inds(T; plev=0, tags="Site") )# `collect` turns tuple to list
     sket = [addtags(i,"Ket") for i in s]
     sbra = [addtags(i,"Bra") for i in s]
 
-    return replaceinds!(T, [s; s'], oinds(sbra, sket)[method])
+    replaceinds!(T, [dag(s); s'], oinds(sbra, sket)[method])
+    if method!=:mpo
+        ITensors.setinds!(T, dag(inds(T)))
+    end
+
+
 end
 
 function braket2prime!(T::ITensor, method=:mpo)
     ix = inds(T)
-    sket = [ x for x in ix[ findall(x->(hastags(x,"Ket")), ix) ]]
-    sbra = [ x for x in ix[ findall(x->(hastags(x,"Bra")), ix) ]]
+    # sket = [ x for x in ix[ findall(x->(hastags(x,"Ket")), ix) ]]
+    sket = collect( inds(T; tags="Ket"))
+    # sbra = [ x for x in ix[ findall(x->(hastags(x,"Bra")), ix) ]]
+    sbra = collect( inds(T; tags="Bra"))
     s = removetags(sket,"Ket")
 
     return replaceinds!(T, oinds(sbra, sket)[method], [s; s'])
@@ -138,14 +132,40 @@ function braket2prime!(ψ::T) where {T<:ITensors.AbstractMPS}
     end
 end
 
+"""
+Transform an operator A into A⊗I (method=:left) or I⊗A (method=:right)) acting on "Bra" and "Ket" indices
+"""
 function mpo2superoperator(O::ITensor, method=:right)::ITensor
     ix = inds(O; plev=0)
     if isempty(ix)
         return O
     end
     newO = prime2braket(O, method)
-    newO * reduce(*, [prime2braket(op("Id", i), (method==:right ? :left : :right)) for i=ix])
+    newO * reduce(*, [prime2braket(op("Id", i), (method==:right ? :left : :right)) for i=dag(ix)])
 end
+
+function mps2superoperator(O::ITensor, method=:right)::ITensor
+    ix = inds(O; plev=0)
+    if isempty(ix)
+        return O
+    end
+    newO = prime2braket(O, method)
+    newO * reduce(*, [op("Id", i) for i=ix])
+end
+
+
+ITensors.op(::OpName"X", ::SiteType"Fermion") = [
+    0.0 1.0
+    1.0 0.0
+  ]
+ITensors.op(::OpName"Y", ::SiteType"Fermion") = [
+    0.0   -1.0im
+    1.0im  0.0
+  ]
+ITensors.op(::OpName"Z", ::SiteType"Fermion") = [
+    1.0  0.0
+    0.0 -1.0
+  ]
 
 
 ITensors.op(::OpName"X1", ::SiteType"Electron") = [
@@ -195,66 +215,138 @@ ITensors.op(::OpName"Z2", ::SiteType"Electron") = [
 
 """Generate array for S=1/2"""
 
-i = Index(2; tags="S=1/2")
-const σarrayS = Array{ComplexF64,3}(undef, (2,2,4))
-for (μ, S) in zip(1:4, ["Id","X","Y","Z"])
-    σarrayS[1:2, 1:2, μ] = Array(op(S,i), i', i) / sqrt(2)
-end
+# i = Index(2; tags="S=1/2")
+# const σarrayS = Array{ComplexF64,3}(undef, (2,2,4))
+# for (μ, S) in zip(1:4, ["Id","X","Y","Z"])
+#     σarrayS[1:2, 1:2, μ] = Array(op(S,i), i', i) / sqrt(2)
+# end
 
 """Generate array for Electron"""
 
-i = Index(4; tags="Electron")
-const σarrayE = Array{ComplexF64,3}(undef, (4,4,16))
-for (μ, (S1,S2)) in enumerate(Iterators.product(["Id","X1","Y1","Z1"],["Id","X2","Y2","Z2"]))
-    σarrayE[1:4, 1:4, μ] = Array( mapprime( op(S1,i)'*op(S2,i), 2=>1), i', i) / sqrt(4)
+# i = Index(4; tags="Electron")
+# const σarrayE = Array{ComplexF64,3}(undef, (4,4,16))
+# for (μ, (S1,S2)) in enumerate(Iterators.product(["Id","X1","Y1","Z1"],["Id","X2","Y2","Z2"]))
+#     σarrayE[1:4, 1:4, μ] = Array( mapprime( op(S1,i)'*op(S2,i), 2=>1), i', i) / sqrt(4)
+# end
+
+
+"""Generate array for S=1/2"""
+function σarray(::SiteType"S=1/2")
+    i = Index(2; tags="S=1/2")
+    σarray = Array{ComplexF64,3}(undef, (2,2,4))
+    for (μ, S) in zip(1:4, ["Id","X","Y","Z"])
+        σarray[1:2, 1:2, μ] = Array(op(S,i), i', i) / sqrt(2)
+    end
+    return σarray
 end
 
+# i = Index(2; tags="S=1/2")
+# const σarrayS = Array{ComplexF64,3}(undef, (2,2,4))
+# for (μ, S) in zip(1:4, ["Id","X","Y","Z"])
+#     σarrayS[1:2, 1:2, μ] = Array(op(S,i), i', i) / sqrt(2)
+# end
 
-const paulidimdict = Dict(
-    "S=1/2" => 4,
-    "Electron" => 16
-)
+"""Generate array for Electron"""
+function σarray(::SiteType"Pauli")
+    i = Index(4; tags="Electron")
+    σarray = Array{ComplexF64,3}(undef, (4,4,16))
+    for (μ, (S1,S2)) in enumerate(Iterators.product(["Id","X1","Y1","Z1"],["Id","X2","Y2","Z2"]))
+        σarray[1:4, 1:4, μ] = Array( mapprime( op(S1,i)'*op(S2,i), 2=>1), i', i) / sqrt(4)
+    end
+    return σarray
+end
 
-const paulidimdictrev = Dict( v => k for (k,v) in paulidimdict)
+function ITensors.space(::SiteType"S=3/2";
+                        conserve_qns=false)
+  if conserve_qns
+    return [QN("Sz",3)=>1,QN("Sz",1)=>1,
+            QN("Sz",-1)=>1,QN("Sz",-3)=>1]
+  end
+  return 4
+end
 
-const σhatDict = Dict(
-    "S=1/2" => σarrayS,
-    "Electron" => σarrayE
-)
+function ITensors.space(::SiteType"PauliFermion";
+                        conserve_qns=false)
+  if conserve_qns
+    return [QN("Nf", 0, -1)=>1,QN("Nf", 1, -1)=>2,QN("Nf", 2, -1)=>1]
+  end
+  return 4
+end
+
+# """Generate array for Fermion"""
+# function σarray(::SiteType"PauliFermion")
+#     i = siteind("Fermion"; conserve_nf=true)
+#     σarray = Array{ComplexF64,3}(undef, (2,2,4))
+#     for (μ, S) in zip(1:4, ["Id - N","c","c†","N"])
+#         σarray[1:2, 1:2, μ] = Array(op(S,i), i', dag(i))
+#     end
+#     return σarray
+# end
+
+Ugate(x::Index, newx::Index) = Ugate(sitetype(newx), x, newx)
+
+function Ugate(::SiteType"Pauli", x::Index, newx::Index)
+    σhat = σarray( sitetype(μ) )
+    ITensor(σhat, x', dag(x), μ[i])
+end
+
+function Ugate(::SiteType"PauliFermion", x::Index, newx::Index)
+    c = combiner(dag(x), x'; tags="new")
+    dag( ITensor(1., dag(combinedind(c)), newx) * c )
+end
+
+# const paulidimdict = Dict(
+#     "S=1/2" => 4,
+#     "Electron" => 16
+# )
+
+# const paulidimdictrev = Dict( v => k for (k,v) in paulidimdict)
+
+# const σhatDict = Dict(
+#     "S=1/2" => σarrayS,
+#     "Electron" => σarrayE
+# )
 
 sitetype(ρ::ITensors.AbstractMPS) = sitetype(siteinds(first, ρ))
-sitetype(s::ITensor) = sitetype(Index[inds(s)...])
-function sitetype(s::Union{<:Index, Vector{<:Index}})
-    for st in keys(σhatDict)
-        if hastags(s, st)
-            return String(st)
-        end
-    end
-end
+sitetype(s::Vector{<:Index}) = SiteType( ITensors.commontags(s)[1] )
+sitetype(s::Index) = sitetype([s])
+
+# sitetype(s::ITensor) = sitetype([inds(s)...])
+# function sitetype(s::Union{<:Index, Vector{<:Index}})
+#     for st in keys(σhatDict)
+#         if hastags(s, st)
+#             return String(st)
+#         end
+#     end
+# end
+
+Base.string(::SiteType{T}) where {T} = T
 
 function convertToPauli(ρ::MPO; makereal=true)::MPS
-    tag = sitetype(ρ)
-    paulidim = paulidimdict[tag]
+    type = sitetype(ρ)
+    # paulidim = paulidimdict[tag]
+    paulidim = size( σarray(type) )[end]
     μ = siteinds(paulidim, length(ρ))
-    μ = addtags(μ, "Pauli")
+    μ = addtags(μ, "Pauli,$(string(type))")
     convertToPauli(ρ, μ; makereal)
 end
 
 function convertToPauli(ρ::MPO, μ::Vector{<:Index}; makereal=true)::MPS
-    s = siteinds(ρ)
+    s = siteinds(first, ρ; plev=0)
 
     MPS( map(1:length(ρ)) do i
-        (sbra, sket) = s[i]
-        σhat = σhatDict[ sitetype(ρ) ]
-        U = ITensor(σhat, sbra, sket, μ[i])
-
+        U = Ugate(s[i], μ[i])
         T = ρ[i] * U
+
+        if makereal && !(all(isapprox.(Array(imag.(T), inds(T)...),0; atol=1e-12)))
+            @show ρ[i]
+            @show T
+        end
+
         makereal && @assert all(isapprox.(Array(imag.(T), inds(T)...),0; atol=1e-12))
         makereal ? real(T) : T
     end)
 end
-
-
 
 convertToSpin(ρ::MPS)::MPO = convertToSpin(ρ, siteinds( paulidimdictrev[ dim( siteinds(ρ)[1] ) ], length(ρ) ) )
 
@@ -281,7 +373,7 @@ function convertToPauli(Ts::Vector{ITensor}, pauliSites::Vector{<:Index})::Vecto
 
         xs = unique([sitepos(x) for x in inds(T)])
 
-        σhat = σhatDict[ sitetype(T) ]
+        σhat = σarray( sitetype(T) )
 
         Us = map(xs) do x
             sites = filter(hastags("n=$x"), pauliSites)
@@ -303,6 +395,7 @@ function convertToPauli(Ts::Vector{ITensor}, pauliSites::Vector{<:Index})::Vecto
         real(U' * T * conj.(U))
     end
 end
+
 convertToPauli(T::ITensor, pauliSites::Vector{<:Index})::ITensor = convertToPauli([T], pauliSites)[1]
 
 """Take a vector of Pauli operators and add identities such that their support is the same"""
@@ -354,18 +447,9 @@ function localop(ρ::MPS, Os::Vector{ITensor})::Vector{Float64}
     _localop(ρ, Os)
 end
 #localop(ρ::MPS, Os::Vector{ITensor}) = localop(convertToSpin(ρ, unioninds(Os...; plev=0)), Os)
-
-function bonddim(ρ::MPS)
-    N = length(ρ)
-    χs = Array{Float64}(undef, N-1)
-    for j=1:N-1
-        χs[j] = linkdim(ρ, j)
-    end
-    χs
-end
-
+#
 export
-    extractsites,
+    # extractsites,
     normalizedm!,
     convertToPauli,
     convertToSpin,
@@ -374,5 +458,5 @@ export
     dagger,
     spin,
     mpo2superoperator,
-    localop,
-    bonddim
+    mps2superoperator,
+    localop
