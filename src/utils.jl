@@ -21,7 +21,7 @@ function logtrace(ρ::MPO)::Float64
     sum = 0
     prod = 1
     for (x,T) in zip(s,ρ)
-        prod *= T * delta(x,x')
+        prod *= T * delta(dag(x), x')
         f = norm(prod)
         sum += log(f)
         prod /= f
@@ -30,23 +30,20 @@ function logtrace(ρ::MPO)::Float64
 end
 
 
-function trace(ρ::MPS)
-    s = siteinds(first, ρ; plev=0)
+trace(::SiteType"Fermion", O::MPO) = mpo_trace(O)
+trace(::SiteType"S=1/2", O::MPO) = mpo_trace(O)
+
+function mpo_trace(O::MPO)
+    s = siteinds(first, O; plev=0)
     prod = 1.
-    for (x,T) in zip(s,ρ)
-        prod *= T * state(x,1)
+    for (x,T) in zip(s,O)
+        prod *= T * delta(dag(x), x')
     end
     prod[1]
 end
 
-function trace(ρ::MPO)
-    s = siteinds(first, ρ; plev=0)
-    prod = 1.
-    for (x,T) in zip(s,ρ)
-        prod *= 1/sqrt(2) * T * delta(x,x')
-    end
-    prod[1]
-end
+trace(st::SiteType, ::MPO) = throw("Unsupported site type \"$(string(st))\"")
+trace(ρ::ITensors.AbstractMPS) = trace(sitetype(ρ), ρ)
 
 function linkdims(ρ::ITensors.AbstractMPS)::Vector{Int64}
     dims = Int64[]
@@ -81,6 +78,7 @@ function apply!(gates::Vector{ITensor}, ψ::MPO; kwargs...)
     ψ.llim = newψ.llim
 
 end
+
 
 function prime2braket(T::ITensor, method=:mpo)::ITensor
     T = copy(T)
@@ -308,7 +306,12 @@ end
 # )
 
 sitetype(ρ::ITensors.AbstractMPS) = sitetype(siteinds(first, ρ))
-sitetype(s::Vector{<:Index}) = SiteType( ITensors.commontags(s)[1] )
+
+_sitetypefilter(t::String) = t!="Site" && t[1:2]!="n="
+sitetype(s::Vector{<:Index}) = SiteType(
+    only(filter(_sitetypefilter∘string,
+                collect(ITensors.commontags(s)))))
+
 sitetype(s::Index) = sitetype([s])
 
 # sitetype(s::ITensor) = sitetype([inds(s)...])
@@ -386,11 +389,8 @@ function convertToPauli(Ts::Vector{ITensor}, pauliSites::Vector{<:Index})::Vecto
 
             @assert !(dummyInd in [jket, jbra]) # dummyInd is deprecated, but just in case
             ITensor(σhat, jket, jbra, μ)
-            #deltaTensor = (dummyInd in [jket, jbra]) ? delta(dummyInd, dummyInd') : ITensor(1)
-
-            # U = ITensor(σhat, jket, jbra, μ)
-            # conj.(U) * U' * deltaTensor
         end
+
         U = reduce(*, Us)
         real(U' * T * conj.(U))
     end
@@ -404,24 +404,27 @@ function addIdentities(ts)
     is = unioninds(ts..., plev=0)
     map(ts) do t
         newix = uniqueinds(is, inds(t))
-        if length(newix)>0
-            t * reduce(*, [op("Id", i) for i in newix])
+        if !isempty(newix)
+            t * reduce(*, [dag(op("Id", i)) for i in newix])
         else
             t
         end
     end
 end
 
+∝(a, b) = b[1,1] * a == b * a[1,1]
+∝(a) = b->∝(a,b)
+
 """remove any superfluous identities in a Pauli string"""
 function removeIdentities(T)
-    s = inds(T; plev=0)
+    s = sort(inds(T; plev=0), by=sitepos)
     for i in reverse(eachindex(s)) # work from back so as not to mess up indexing
-        others = vcat(s[1:i-1], s[i+1:end])
-        C = combiner(others..., (others')...)
+        others = vcat(s[1:i-1]..., s[i+1:end]...)
+        C = combiner(others..., dag.(others')...)
         U = C * T
-        A = Array(U, s[i], s[i]', combinedind(C))
-        if all(A[1,2,:] .== A[2,1,:] .== 0) && all(A[1,1,:] .== A[2,2,:])
-            T *= onehot(s[i]=>1) * onehot(s[i]'=>1)
+        A = Array(U, s[i], dag(s[i])', combinedind(C))
+        if all(mapslices(∝(I), A; dims=[1,2]))
+            T *= onehot(s[i]'=>1) * onehot(dag(s[i])=>1)
         end
     end
     T
@@ -430,7 +433,7 @@ end
 function _localop(ρ::ITensors.AbstractMPS, Os::Vector{ITensor})::Vector{Float64}
     map(Os) do O
         if isempty(inds(O)) return O[1] end # little hack to include 0-dim tensors
-        real( trace( product(O, ρ) )  )
+        trace( product(O, ρ) )
     end
 end
 
@@ -438,13 +441,22 @@ end
 localop(ρ::MPO, Os::Vector{ITensor})::Vector{Float64} = _localop(ρ, Os)
 
 function localop(ρ::MPS, Os::Vector{ITensor})::Vector{Float64}
-    if sitetype(Os[1]) != "Pauli"
-        μ = siteinds(first, ρ; plev=0)
-        soOs = mpo2superoperator.( Os )
-        Os = convertToPauli( soOs, μ )
+    map(Os) do O
+        # little hack to include 0-dim tensors
+        if isempty(inds(O))
+            return O[1]
+        end
+        SO = superoperator(O, I, siteinds(ρ))
+        real( trace( product(SO, ρ) )  )
     end
 
-    _localop(ρ, Os)
+    # if sitetype(Os[1]) != "Pauli"
+    #     μ = siteinds(first, ρ; plev=0)
+    #     soOs = mpo2superoperator.( Os )
+    #     Os = convertToPauli( soOs, μ )
+    # end
+
+    # _localop(ρ, Os)
 end
 #localop(ρ::MPS, Os::Vector{ITensor}) = localop(convertToSpin(ρ, unioninds(Os...; plev=0)), Os)
 #
