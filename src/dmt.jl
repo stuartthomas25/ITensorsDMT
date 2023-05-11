@@ -44,9 +44,15 @@ Lsum and Rsum are the traces of the MPO to the left and right of ϕ.
 
 If ϕ has more than 2 site indices, truncate between the left two.
 """
-function dmt(ϕ::ITensor, Lsum::ITensor, Rsum::ITensor; maxdim::Int64=Inf, cutoff::Float64=1e-12)::Tuple{ITensor, ITensor}
-    maxdim >= 8 || throw("Max dim must be greater than or equal to 7")
+function dmt(
+    ϕ::ITensor,
+    Lsum::ITensor,
+    Rsum::ITensor;
+    maxdim::Int64=typemax(Int64),
+    cutoff::Float64=0.
+        )::Tuple{ITensor, ITensor}
 
+    maxdim >= 8 || throw("Max dim must be greater than or equal to 7")
 
     sites = sort(inds(ϕ, "Site"), by=sitepos)
     ns = sitepos.(sites)
@@ -66,17 +72,16 @@ function dmt(ϕ::ITensor, Lsum::ITensor, Rsum::ITensor; maxdim::Int64=Inf, cutof
     relevant_dims = Dict(sites[1].space)
     nzblocksM = nzblocks(M)
     @assert all( b[1]==b[2] for b in nzblocksM )
-    zeroflux_block = only( b for b in nzblocksM if val(qn(qL, b[1]), "Nf")|>iszero )
     unconnected_component = nothing
 
     svds = map(nzblocksM) do b
         qn_rule = qn(qL, b[1])
+        flux = val(qn_rule, "Nf")
         bM = matrix(blockview(M.tensor, b))
         i = relevant_dims[qn_rule]
         bMsub = bM[i+1:end, i+1:end]
 
-        if b == zeroflux_block && abs(bM[1,1]) > 1e-10
-            @warn "Removing connected component"
+        if iszero(flux) && abs(bM[1,1]) > 1e-10
             unconnected_component = (bM[i+1:end,1:1] * bM[1:1,i+1:end]) / bM[1,1]
             bMsub = bMsub - unconnected_component
         end
@@ -93,7 +98,8 @@ function dmt(ϕ::ITensor, Lsum::ITensor, Rsum::ITensor; maxdim::Int64=Inf, cutof
         S2 = [ x>=new_cutoff ? x : 0. for x∈S2 ]
         new_bMsub = U2 * Diagonal(S2) * Vt2
 
-        if !isnothing(unconnected_component) && b==zeroflux_block
+        flux = val(qn(qL, b[1]), "Nf")
+        if iszero(flux) && !isnothing(unconnected_component)
             new_bMsub .+= unconnected_component
         end
 
@@ -104,13 +110,8 @@ function dmt(ϕ::ITensor, Lsum::ITensor, Rsum::ITensor; maxdim::Int64=Inf, cutof
     U3, S3, Vt3, _, u3 = svd(M, qL; cutoff)
     newlink = sim(u3; tags="Link,l=$(ns[1])")
 
-    if dim(newlink)==0
-        @show u3 M
-        throw("Here!")
-    end
-
-    A = replaceind(U * QL * U3,              u3, newlink)
-    B = replaceind(S3 * Vt3 * conj(QR) * Vt, u3, newlink)
+    A = replaceind(U * conj(QL) * U3,  u3, newlink)
+    B = replaceind(S3 * Vt3 * QR * Vt, u3, newlink)
     A, B
 end
 
@@ -126,27 +127,27 @@ function apply!(o::ITensor, ρ::MPS, ::DMT; maxdim::Int64=64, cutoff::Float64=1e
     N  = length(ns)
     x = ns[1]
 
-    oldl = linkinds(ρ)
+    # oldl = linkinds(ρ)
 
     orthogonalize!(ρ, ns[1])
-    newl = linkinds(ρ)
+    # newl = linkinds(ρ)
 
-    ϕ = reduce(*, [ρ[n] for n=ns])
+    ϕ = foldl(*, [ρ[n] for n=ns])
     ϕ = product(o, ϕ)
 
-    ρsums = map(ρ.data) do T
+    ρsums = map(ρ) do T
         x = only(inds(T; tags="Site", plev=0))
         T * tracer(x)
     end
 
-    Lsum = reduce(*, ρsums[1:ns[1]-1])
-    Rsum = reduce(*, ρsums[ns[end]+1:end])
+    Lsum = foldl(*, ρsums[1:ns[1]-1])
+    Rsum = foldl(*, ρsums[ns[end]+1:end])
 
     ψ = Vector{ITensor}(undef, N)
     for n in 1:(N-1)
         L, R = dmt(ϕ, Lsum, Rsum; maxdim, cutoff)
         ψ[n] = L
-        Lsum = Lsum * tracetensor(L)
+        Lsum = Lsum * (L * tracer(inds(L; tags="Site") |> only))
         ϕ = R
     end
     ψ[N] = ϕ
