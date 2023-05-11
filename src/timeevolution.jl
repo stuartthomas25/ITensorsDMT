@@ -29,7 +29,7 @@ function gate(
         end
     end
 
-    return exp(ITensors.dropzeros(liouvillian))
+    return exp(clean(liouvillian))
 
 end
 
