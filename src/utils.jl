@@ -35,8 +35,8 @@ tracer(::SiteType, x::Index)
 a tensor that takes a trace over an index
 """
 tracer(x::Index) = tracer(sitetype(x), x)
-tracer(::SiteType"FermionOperator", x::Index) = dim(x)^(1/4) * state(dag(x), 1)
-tracer(::SiteType"PauliOperator", x::Index) = dim(x)^(1/4) * state(dag(x), 1)
+tracer(::SiteType"FermionOperator", x::Index) = state(dag(x), 1)
+tracer(::SiteType"PauliOperator", x::Index) = state(dag(x), 1)
 tracer(::SiteType"Fermion", x::Index) = delta(dag(x), x')
 tracer(::SiteType"S=1/2",   x::Index) = delta(dag(x), x')
 tracer(st::SiteType, ::Index) = throw("Unsupported site type \"$(string(st))\"")
@@ -51,8 +51,7 @@ function trace(ψ::ITensors.AbstractMPS)
 end
 
 function logtrace(ψ::ITensors.AbstractMPS)::Float64
-    s = siteinds(first, ψ; plev=0)
-    st = sitetype(ψ)
+    μ = siteinds(first, ψ; plev=0)
     sum = 0.
     prod = 1.
     for (x,T) in zip(s,ψ)
@@ -98,24 +97,43 @@ function removeIdentities(T)
     T
 end
 
-function localop(ρ::MPS, Os::Vector{ITensor})::Vector{Float64}
-    map(Os) do O
-        # little hack to include 0-dim tensors
-        if isempty(inds(O))
-            return O[1]
+function probe(Os::Vector{ITensor}, μ::Vector{<:Index}; kwargs...)
+    wrappers = [probe(O, μ; kwargs...) for O in Os]
+    return ρ -> [w(ρ) for w in wrappers]
+end
+
+"""
+`
+probe(O::ITensor, μ::Vector{<:Index}; realval=true)
+`
+Create a function that measures an MPS using the observable `O`. `μ` are the site indices of the MPS.
+"""
+function probe(O::ITensor, μ::Vector{<:Index}; realval=true)
+    if inds(O) |> isempty
+        return ρ -> O[1]
+    end
+
+    SO = superoperator(O,I,μ)
+    tSO = SO * foldl(*, (dag(tracer(x)') for x in inds(SO; plev=0)))
+
+    function wrapper(ρ::MPS)
+        μ = siteinds(first, ρ; plev=0)
+        traced_ρ = ITensor(one(ComplexF64))
+        for (x,T) in zip(μ,ρ)
+            traced_ρ *= T
+            if commoninds(tSO, T) |> isempty
+                traced_ρ *= tracer(x)
+            end
         end
-        real( trace( product(O, ρ) )  )
+
+        res = traced_ρ * tSO
+        @assert isempty(inds(res))
+        return realval ? real(only(res)) : only(res)
     end
 end
 
 export
-    normalizedm!,
-    convertToPauli,
-    convertToSpin,
-    sitepos,
     trace,
-    dagger,
-    spin,
-    mpo2superoperator,
-    mps2superoperator,
-    localop
+    localop,
+    logtrace,
+    probe

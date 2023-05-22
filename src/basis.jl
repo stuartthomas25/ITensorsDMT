@@ -4,19 +4,18 @@ superoperator(A::ITensor, B::ITensor, μ::Vector{<:Index})
 `
 
 Turn two ITensors `A` and `B` into a superoperator A⊗B using the basis of `μ`
-
+⟨σᵃ, A σᵇ B⟩ = Tr[σᵃ† A σᵇ B] = σᵃ*₃₀A₃₂σᵇ₂₁B₁₀
 """
 function superoperator(A::ITensor, B::ITensor, μ::Vector{<:Index})::ITensor
     @assert ndims(A) == ndims(B)
-    s  = inds(A; plev=0)
-    A′ = replaceprime(A, 0=>2)
-    B′ = replaceprime(B, 1=>3)
-    AxB = A′*B′
+    s  = dag(inds(B; plev=0))
+    A′ = replaceprime(A, 0=>2, 1=>3)
+    AxB = A′*B
     for x=s
         y = μ[sitepos(x)]
-        innerU = swapprime( changeOfBasis(x'', y), 3=>2)
-        outerU = changeOfBasis(x, y')
-        AxB = (AxB * dag(innerU)) * outerU
+        innerU = changeOfBasis(x', dag(y))
+        outerU = swapprime(changeOfBasis(x'', dag(y')), 2=>0)
+        AxB = (AxB * innerU) * dag(outerU)
     end
     AxB
 end
@@ -58,10 +57,7 @@ Separate the indices of an MPS to make an MPO
 function ITensors.MPO(ψ::MPS, s::Vector{<:Index})::MPO
     μ = siteinds(only, ψ)
     newdata = map(eachindex(ψ)) do i
-        # c = combiner(s[i], dag(s[i]'); dir=ITensors.In)
-        # cx = combinedind(c)
         U = changeOfBasis(s[i], μ[i])
-        # @show inds(dag(U)) inds(ψ.data[i])
         dag(U) * ψ.data[i]
     end
     MPO(newdata, ψ.llim, ψ.rlim)
@@ -85,16 +81,11 @@ function ITensors.MPS(ρ::MPO, μ::Vector{<:Index})::MPS
     MPS(newdata, ρ.llim, ρ.rlim)
 end
 
-ITensors.op(::OpName"Z", ::SiteType"Fermion") = [
-    1.0  0.0
-    0.0 -1.0
-  ]
-
 # Fermion Operator Site Type
 changeOfBasisTensors(::SiteType"FermionOperator", x::Index) =
     [
      1/√2 * op("Id", x),
-     1/√2 * op("Z",  x),
+     1/√2 * op("F",  x),
      1.   * op("c",  x),
      1.   * op("c†", x)
      ] # we use this order so that the (-1,0,0,1) block structure is preserved
@@ -107,16 +98,9 @@ ITensors.space(::SiteType"FermionOperator"; conserve_nf=false) = conserve_nf ? [
 
 ITensors.state(::StateName"Id", ::SiteType"FermionOperator") = [1.0, 0, 0, 0]
 
-ITensors.state(::StateName"InfTemp", ::SiteType"FermionOperator") = [1/√2, 0, 0, 0]
-
-function trace(::SiteType"FermionOperator", ρ::MPS)
-    μ = siteinds(first, ρ; plev=0)
-    prod = 1.
-    for (x,T) in zip(μ,ρ)
-        prod *= dim(x)^(1/4) * T * state(dag(x),1)
-    end
-    prod[1]
-end
+ITensors.state(::StateName"InfTemp", ::SiteType"FermionOperator") = [1., 0, 0, 0]
+ITensors.state(::StateName"Emp", ::SiteType"FermionOperator") = [1/√2, 1/√2, 0, 0]
+ITensors.state(::StateName"Occ", ::SiteType"FermionOperator") = [1/√2, -1/√2, 0, 0]
 
 # Pauli Operator Site Type
 changeOfBasisTensors(::SiteType"PauliOperator", x::Index) =
@@ -128,15 +112,6 @@ changeOfBasisTensors(::SiteType"PauliOperator", x::Index) =
 ITensors.space(::SiteType"PauliOperator") = 4
 
 ITensors.state(::StateName"Id", ::SiteType"PauliOperator") = [1.0, 0, 0, 0]
-
-function trace(::SiteType"PauliOperator", ρ::MPS)
-    μ = siteinds(first, ρ; plev=0)
-    prod = 1.
-    for (x,T) in zip(μ,ρ)
-        prod *= dim(x)^(1/4) * T * state(dag(x),1)
-    end
-    prod[1]
-end
 
 
 

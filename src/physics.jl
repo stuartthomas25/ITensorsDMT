@@ -108,6 +108,7 @@ function currentOperator(ham::Vector{ITensor}, O::Vector{ITensor})::Vector{ITens
     push!(js, ITensor(0.));
     js
 end
+
 currentOperator(ham::Vector{ITensor}, O::ITensor) = currentOperator(ham, [O])
 
 
@@ -176,6 +177,7 @@ end
 
 include("timedoubling.jl")
 include("noise.jl")
+include("models.jl")
 
 export
     entanglement_entropy,
