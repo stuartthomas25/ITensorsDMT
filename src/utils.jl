@@ -87,7 +87,8 @@ function removeIdentities(T)
     s = sort(inds(T; plev=0), by=sitepos)
     for i in reverse(eachindex(s)) # work from back so as not to mess up indexing
         others = vcat(s[1:i-1]..., s[i+1:end]...)
-        C = combiner(others..., dag.(others')...)
+        common_others = commoninds(T, others)
+        C = combiner(common_others..., dag.(common_others')...)
         U = C * T
         A = Array(U, s[i], dag(s[i])', combinedind(C))
         if all(mapslices(∝(I), A; dims=[1,2]))
@@ -132,8 +133,25 @@ function probe(O::ITensor, μ::Vector{<:Index}; realval=true)
     end
 end
 
+"""
+`
+dagger(T::ITensor)
+`
+Take the full Hermitian conjugate of an ITensor.
+
+This function takes the complex conjugate, flips arrows and flips prime levels between 1 and 0.
+"""
+function dagger(T::ITensor)
+    return swapprime(dag(T),0,1,tags="Site")
+end
+
+function dagger(ρ::MPO)
+    MPO([dagger(T) for T in ρ.data])
+end
+
 export
     trace,
     localop,
     logtrace,
-    probe
+    probe,
+    dagger
