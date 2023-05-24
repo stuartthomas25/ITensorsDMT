@@ -8,7 +8,7 @@ Turn two ITensors `A` and `B` into a superoperator A⊗B using the basis of `μ`
 """
 function superoperator(A::ITensor, B::ITensor, μ::Vector{<:Index})::ITensor
     @assert ndims(A) == ndims(B)
-    s  = dag(inds(B; plev=0))
+    s = dag(inds(B; plev=0))
     A′ = replaceprime(A, 0=>2, 1=>3)
     AxB = A′*B
     for x=s

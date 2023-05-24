@@ -77,7 +77,7 @@ module Models
         hs
     end
 
-    function MOH(s::Vector{<:Index}; t::Float64=1., t′::Float64=1., V::Float64=1.)::Vector{ITensor}
+    function MOH(s::Vector{<:Index}; t1::Float64=1., t2::Float64=1., V::Float64=1.)::Vector{ITensor}
         hs = ITensor[]
         N = length(s)
         for j=2:N-1
@@ -85,28 +85,28 @@ module Models
             s1,s2,s3  = srange
             hj = ITensor(0., dag(srange)..., srange'...)
 
-            hj += -t/2 * ( op("c†", s1) * op("c",  s2) * op("Id", s3) +
-                        op("c†", s2) * op("c",  s1) * op("Id", s3) +
-                        op("Id", s1) * op("c†", s2) * op("c",  s3) +
-                        op("Id", s1) * op("c†", s3) * op("c",  s2) )
+            hj += -t1/2 * ( op("c†", s1) * op("c",  s2) * op("Id", s3) +
+                            op("c†", s2) * op("c",  s1) * op("Id", s3) +
+                            op("Id", s1) * op("c†", s2) * op("c",  s3) +
+                            op("Id", s1) * op("c†", s3) * op("c",  s2) )
 
-            hj += -t′  * ( op("c†", s1) * op("F",  s2) * op("c",  s3) +
-                        op("c†", s3) * op("F", s2) * op("c",  s1) )
+            hj += -t2   * ( op("c†", s1) * op("F",  s2) * op("c",  s3) +
+                            op("c†", s3) * op("F", s2) * op("c",  s1) )
 
-            hj +=  V/2 * ( op("N",  s1) * op("N",  s2) * op("Id", s3) +
-                        op("Id", s1) * op("N",  s2) * op("N",  s3) )
+            hj +=  V/2  * ( op("N",  s1) * op("N",  s2) * op("Id", s3) +
+                            op("Id", s1) * op("N",  s2) * op("N",  s3) )
 
 
             if j == 2
-                hj += -t/2 * ( op("c†", s1) * op("c",  s2) * op("Id", s3) +
-                            op("c†", s2) * op("c",  s1) * op("Id", s3) )
-                hj +=  V/2 * ( op("N",  s1) * op("N",  s2) * op("Id", s3) )
+                hj += -t1/2 * ( op("c†", s1) * op("c",  s2) * op("Id", s3) +
+                                op("c†", s2) * op("c",  s1) * op("Id", s3) )
+                hj +=  V/2  * ( op("N",  s1) * op("N",  s2) * op("Id", s3) )
             end
 
             if j == N-1
-                hj += -t/2 * ( op("Id", s1) * op("c†", s2) * op("c",  s3) +
-                            op("Id", s1) * op("c†", s3) * op("c",  s2) )
-                hj +=  V/2 * ( op("Id", s1) * op("N",  s2) * op("N",  s3) )
+                hj += -t1/2 * ( op("Id", s1) * op("c†", s2) * op("c",  s3) +
+                                op("Id", s1) * op("c†", s3) * op("c",  s2) )
+                hj +=  V/2  * ( op("Id", s1) * op("N",  s2) * op("N",  s3) )
             end
 
             push!(hs, hj)

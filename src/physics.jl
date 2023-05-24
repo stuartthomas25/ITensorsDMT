@@ -103,6 +103,7 @@ function currentOperator(ham::Vector{ITensor}, O::Vector{ITensor})::Vector{ITens
         ∂th = sum(addIdentities(∂thTerms))
         ∂th, prevj = addIdentities([∂th, js[end]])
         j = prevj - ∂th
+
         push!(js, removeIdentities(j))
     end
     push!(js, ITensor(0.));
@@ -182,12 +183,4 @@ include("models.jl")
 export
     entanglement_entropy,
     vonneumann,
-    TFIM,
-    XXX,
-    MFIM,
-    Ising,
-    Trivial,
-    energy_density,
-    infTempState,
-    spinval,
     currentOperator
