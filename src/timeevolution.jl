@@ -13,20 +13,19 @@ function gate(
 
     # add Lindbladians for open system
     l = sort(inds(h, plev=0), by=sitepos)
-    idT = superoperator(I, I, collect(l))
-    for i=eachindex(l)
-        s = l[i]
+    idT = superoperator(I, I, commoninds(hL, μ))
+    for s=l
         Ls = dissipator(noise, s)
 
         for L=Ls
             LL = superoperator(L, I, μ)
             LR = superoperator(I, L, μ)
-            term1 = LL * dagger(LR) * idT
-            term2 = - 1/2 * product(dagger(LL), LL) * idT
-            term3 = - 1/2 * idT * product(LR, dagger(LR)) # note that right operators are flipped when applied
+            term1 =        product(LL, dagger(LR))
+            term2 = -1/2 * product(dagger(LL), LL)
+            term3 = -1/2 * product(LR, dagger(LR)) # note that right operators are flipped when applied
 
             # factor of 1/length(l) due to Trotterization
-            liouvillian += 1/length(l) * real(δt) * (term1 + term2 + term3)
+            liouvillian += 1/length(l) * real(δt) * product(term1 + term2 + term3, idT)
         end
     end
 
