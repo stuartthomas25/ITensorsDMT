@@ -1,3 +1,11 @@
+:PROPERTIES:
+:header-args: julia-vterm :session tests :results silent :tangle runtests.jl
+:END:
+#+TITLE: TEBD Tests
+#+STARTUP: hideblocks fold
+#+auto_tangle: t
+
+#+begin_src julia
 using Test
 using ITensors
 import Random
@@ -9,7 +17,9 @@ function check_hermiticity(ρ::MPS, s::Vector{<:Index})
     mpo = MPO(ρ, s)
     dot(mpo, dagger(mpo)) / dot(mpo, mpo) ≈ 1.
 end
+#+end_src
 
+#+begin_src julia
 @testset "Superoperator evolution" begin
     """
     Test that superoperator evolution is equivalent to normal evolution
@@ -47,7 +57,9 @@ end
         @test dot(mpo, mpo′) ≈ 1
     end
 end
+#+end_src
 
+#+begin_src julia
 @testset "Identity" begin
     """
     Test that identity is H eigenstate
@@ -74,7 +86,9 @@ end
 
     @test dot(ρ, ρ′) ≈ 1
 end
+#+end_src
 
+#+begin_src julia
 @testset "Hermiticity" begin
     """
     Test Hermiticity
@@ -100,7 +114,9 @@ end
 
     @test check_hermiticity(mps, s)
 end
+#+end_src
 
+#+begin_src julia
 @testset "Lindbladian" begin
     """
     Test non-unitary time evolution
@@ -143,7 +159,9 @@ end
     @test trace(ρ2) ≈ trace(ρ₀)
     @test trace(ρ3) ≈ trace(ρ₀)
 end
+#+end_src
 
+#+begin_src julia
 @testset "Trotter algorithms" begin
     """
     Test that superoperator evolution is equivalent to normal evolution
@@ -182,7 +200,9 @@ end
         @test !isapprox( dot(ρ₀, mpo) , 1., atol=1e-2)
     end
 end
+#+end_src
 
+#+begin_src julia
 @testset "n=3 Trotter algorithms" begin
     """
     Test that superoperator evolution is equivalent to normal evolution
@@ -220,7 +240,9 @@ end
         @test !isapprox( dot(ρ₀, mpo) , 1., atol=1e-2)
     end
 end
+#+end_src
 
+#+begin_src julia
 @testset "DMT" begin
     """
     Test the guarantees of DMT:
@@ -282,7 +304,9 @@ end
         end
     end
 end
+#+end_src
 
+#+begin_src julia
 @testset "Pauli Commutation" begin
     """
     Verify that the the MPS to MPO transformation is natural, i.e.
@@ -326,7 +350,9 @@ end
     @test !isapprox(m0, m1; atol=1e-14)
     @test !isapprox(m0, m2; atol=1e-14)
 end
+#+end_src
 
+#+begin_src julia
 @testset "Time doubling" begin
     """
     Test that the time-doubling trick matches the normal measurement
@@ -370,3 +396,4 @@ end
 
     @test all(isapprox.(ε, ε2t; atol=0.02))
 end
+#+end_src
