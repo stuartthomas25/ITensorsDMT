@@ -96,11 +96,10 @@ ITensors.space(::SiteType"FermionOperator"; conserve_nf=false) = conserve_nf ? [
                                             QN("Nf", 1,-1)=>1
                                            ] : 4
 
-ITensors.state(::StateName"Id", ::SiteType"FermionOperator") = [1.0, 0, 0, 0]
-
-ITensors.state(::StateName"InfTemp", ::SiteType"FermionOperator") = [1., 0, 0, 0]
-ITensors.state(::StateName"Emp", ::SiteType"FermionOperator") = [1/√2, 1/√2, 0, 0]
-ITensors.state(::StateName"Occ", ::SiteType"FermionOperator") = [1/√2, -1/√2, 0, 0]
+ITensors.state(::StateName"Id",      ::SiteType"FermionOperator") = [1,  0,  0,  0]
+ITensors.state(::StateName"InfTemp", ::SiteType"FermionOperator") = [1,  0,  0,  0]
+ITensors.state(::StateName"Emp",     ::SiteType"FermionOperator") = [1,  1,  0,  0]
+ITensors.state(::StateName"Occ",     ::SiteType"FermionOperator") = [1, -1,  0,  0]
 
 # Pauli Operator Site Type
 changeOfBasisTensors(::SiteType"PauliOperator", x::Index) =
