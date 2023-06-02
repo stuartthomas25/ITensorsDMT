@@ -92,10 +92,10 @@ end
 energy_density(ρ::ITensors.AbstractMPS, ham::Vector{ITensor}) = localop(ρ, ham)
 
 """ Energy current operator"""
-currentOperator(ham::Vector{ITensor}) = currentOperator(ham, ham)
+current_operator(ham::Vector{ITensor}) = current_operator(ham, ham)
 
 """ Calculate the current operator of a charge `O` under time evolution of `ham` """
-function currentOperator(ham::Vector{ITensor}, O::Vector{ITensor})::Vector{ITensor}
+function current_operator(ham::Vector{ITensor}, O::Vector{ITensor})::Vector{ITensor}
     js = [ITensor(0.)] # set first current to 0
     for On in O[1:end-1]
         relevantTerms = filter(h->length(commoninds(h, On))!=0, ham)
@@ -110,7 +110,7 @@ function currentOperator(ham::Vector{ITensor}, O::Vector{ITensor})::Vector{ITens
     js
 end
 
-currentOperator(ham::Vector{ITensor}, O::ITensor) = currentOperator(ham, [O])
+current_operator(ham::Vector{ITensor}, O::ITensor) = current_operator(ham, [O])
 
 
 function entanglement_entropy(ψ₀::ITensors.AbstractMPS)::Vector{Float64}
@@ -174,6 +174,56 @@ function vonneumann(ρ::MPO)
     S
 end
 
+function offdiagITensor(n::Integer, leftind::Index{Int}, rightind::Index{Int})
+    # Dense
+    @assert dim(leftind) == dim(rightind)
+    m = dim(leftind)
+    M = diagm(n=>fill(1., m-n))
+    ITensor(M, leftind, rightind)
+end
+
+function offdiagITensor(n::Integer, leftind::Index{<:Vector}, rightind::Index{<:Vector})
+    # Sparse
+    @assert dim(leftind) == dim(rightind)
+    m = dim(leftind)
+    M = ITensor(leftind, dag(rightind))
+    for i=1:m-n
+        M[i,i+n] = 1.
+    end
+    M
+end
+
+"""
+`
+binom_rootn(n,k)
+`
+
+Calculate `binomial(n,k)^(1/n)` without an integer overflow.
+"""
+binom_rootn(n,k) = prod( (nn/dd)^(1/n) for (nn,dd) in zip(n-k+1:n, 1:k) )
+
+function inftemp_state_with_filling(μ::Vector{<:Index}, ν::Rational)
+    @assert sitetype(μ) === SiteType("FermionOperator")
+    @assert isinteger(ν * length(μ))
+
+    N = length(μ)
+    n = numerator(ν * N)
+    if μ isa Vector{<:Index{<:Vector}} # if there are conserved quantum numbers
+        qns = [QN("Nf", i, -1) => 1 for i in 0:n]
+        l = [Index(qns; tags="Link,l=$i") for i=0:N]
+    else
+        l = [Index(n+1; tags="Link,l=$i") for i=0:N]
+    end
+    As = map(1:N) do i
+        emp = offdiagITensor(0, l[i], l[i+1]) * state(μ[i], "Emp")
+        occ = offdiagITensor(1, l[i], l[i+1]) * state(μ[i], "Occ")
+        (emp + occ) / binom_rootn(N,n)
+    end
+    As[1]   *= onehot(dag(l[1])=>1)
+    As[end] *= onehot(l[end]=>n+1)
+    truncate(MPS(As))
+end
+
 
 
 include("timedoubling.jl")
@@ -183,4 +233,5 @@ include("models.jl")
 export
     entanglement_entropy,
     vonneumann,
-    currentOperator
+    current_operator,
+    inftemp_state_with_filling

@@ -124,7 +124,6 @@ module Models
 
             hj += -t * ( op("c†", s1) * op("c",  s2) +
                          op("c†", s2) * op("c",  s1) )
-                         # op("c", s1) * op("c†",  s2) )
 
             push!(hs, hj)
         end
