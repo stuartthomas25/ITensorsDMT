@@ -98,16 +98,16 @@ current_operator(ham::Vector{ITensor}) = current_operator(ham, ham)
 function current_operator(ham::Vector{ITensor}, O::Vector{ITensor})::Vector{ITensor}
     js = [ITensor(0.)] # set first current to 0
     for On in O[1:end-1]
-        relevantTerms = filter(h->length(commoninds(h, On))!=0, ham)
+        relevantTerms = filter(h->!isempty(commoninds(h, On)), ham)
         ∂thTerms = map(t -> 1im * (product(t, On) - product(On, t)), relevantTerms)
-        ∂th = sum(addIdentities(∂thTerms))
-        ∂th, prevj = addIdentities([∂th, js[end]])
+        ∂th = sum(addIdentities(∂thTerms...))
+        ∂th, prevj = addIdentities(∂th, js[end])
         j = prevj - ∂th
 
         push!(js, removeIdentities(j))
     end
     push!(js, ITensor(0.));
-    js
+    clean.(js)
 end
 
 current_operator(ham::Vector{ITensor}, O::ITensor) = current_operator(ham, [O])
