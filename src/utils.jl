@@ -65,7 +65,7 @@ end
 
 
 """Take a vector of Pauli operators and add identities such that their support is the same"""
-function addIdentities(ts)
+function addIdentities(ts...)
     length(ts)==0 && return ts
     is = unioninds(ts..., plev=0)
     map(ts) do t
@@ -149,9 +149,20 @@ function dagger(ρ::MPO)
     MPO([dagger(T) for T in ρ.data])
 end
 
+decomplexify(nt::NamedTuple) = map(pairs(nt) |> collect) do (k,v)
+    if v isa Complex
+        k_re = Symbol(string(k)*"_re")
+        k_im = Symbol(string(k)*"_im")
+        [k_re=>real(v), k_im=>imag(v)]
+    else
+        [k=>v]
+    end
+end |> Iterators.flatten |> collect |> NamedTuple
+
 export
     trace,
     localop,
     logtrace,
     probe,
-    dagger
+    dagger,
+    decomplexify
