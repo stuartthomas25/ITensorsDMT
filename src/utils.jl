@@ -100,7 +100,7 @@ end
 
 function probe(Os::Vector{ITensor}, μ::Vector{<:Index}; kwargs...)
     wrappers = [probe(O, μ; kwargs...) for O in Os]
-    return ρ -> [w(ρ) for w in wrappers]
+    return ρ -> [(w(ρ) for w in wrappers)...]
 end
 
 """
@@ -149,11 +149,14 @@ function dagger(ρ::MPO)
     MPO([dagger(T) for T in ρ.data])
 end
 
+decomplexify(z::Complex) = (real(z), imag(z))
+decomplexify(z::Array{<:Complex}) = (real.(z), imag.(z))
 decomplexify(nt::NamedTuple) = map(pairs(nt) |> collect) do (k,v)
-    if v isa Complex
+    if hasmethod(decomplexify, (typeof(v),))
         k_re = Symbol(string(k)*"_re")
         k_im = Symbol(string(k)*"_im")
-        [k_re=>real(v), k_im=>imag(v)]
+        v_re, v_im = decomplexify(v)
+        [k_re=>v_re, k_im=>v_im]
     else
         [k=>v]
     end
