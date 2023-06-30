@@ -1,3 +1,4 @@
+isinteractive() && using Revise
 using Test
 using ITensors
 import Random
@@ -225,7 +226,7 @@ end
     """
     Test the guarantees of DMT:
     1. Trace is preserved
-    2. length 2 operators are preserved
+    2. length 3 operators are preserved
     """
     N         = 128
     τ         = 0.5
@@ -234,14 +235,14 @@ end
     μ         = siteinds("PauliOperator", N)
     ham       = Models.MFIM(s)
     ρ₀        = MPS(μ, "Id")
-    # O         = op("Z", s[N÷2-1]) * op("Z", s[N÷2+1]) # a three site operator to test DMT's three site guarantee
 
+    # a three site operator to test DMT's three site guarantee
+    o_f       = probe([op("Z", s[i]) * op("Z", s[i+1]) * op("Z", s[i+2]) for i in 1:N-2], μ)
     ε_f       = probe(ham[N÷2], μ)
-    # O_f       = probe(O, μ)
     x         = s[N÷2]
     cutoff    = 1e-12
     maxdim = 16
-    truncmaxdim = 8
+    truncmaxdim = 10
 
     # verify that tests fail for Naive Truncation but pass for DMT
     for (method, expresult) in zip([DMT(), NaiveTruncation()], [true, false])
@@ -261,20 +262,87 @@ end
 
             @test all(linkdims(ρ) .<= maxdim)
 
+            # test trace
             if testtrace
                 @test isapprox(trace(ρ), 1.; rtol = 1e-8) == expresult
             end
 
-            Oold = ε_f(ρ)
+            Oold = o_f(ρ)
 
-            """
-            truncate down to truncmaxdim, but don't time-evolve
-            """
+            # truncate down to truncmaxdim, but don't time-evolve
             H′ = op("Id", s[N÷2]) * op("Id", s[N÷2+1])
             idGate = gate(H′, 1., μ)
             apply!([idGate], ρ, method; maxdim=truncmaxdim, cutoff)
 
-            Onew = ε_f(ρ)
+            Onew = o_f(ρ)
+
+            @test linkdim(ρ, N÷2) <= truncmaxdim
+
+            @test isapprox(Onew, Oold; rtol=1e-10) == expresult
+        end
+    end
+end
+
+@testset "DMT Fermions" begin
+    """
+    Test the guarantees of DMT:
+    1. Trace is preserved
+    2. length 2 operators are preserved
+    """
+    N           = 128
+    τ           = 0.5
+    steps       = 8
+    conserve_nf = true
+    s           = siteinds("Fermion",N; conserve_nf)
+    μ           = siteinds("FermionOperator", N; conserve_nf)
+    ham         = Models.MOH(s)
+    ρ₀          = MPS(μ, "Id")
+    # O         = op("Z", s[N÷2-1]) * op("Z", s[N÷2+1]) # a three site operator to test DMT's three site guarantee
+
+
+    # a three site operator to test DMT's three site guarantee
+    o_f         = probe([op("N", s[i]) * op("N", s[i+1]) * op("N", s[i+2]) for i in 1:N-2], μ)
+    ε_f         = probe(ham[N÷2], μ)
+    x           = s[N÷2]
+    cutoff      = 1e-12
+    maxdim      = 16
+    truncmaxdim = 10
+
+    # verify that tests fail for Naive Truncation but pass for DMT
+    for (method, expresult) in zip([DMT(), NaiveTruncation()], [true, false])
+
+        # try normal and traceless cases
+        for (V, testtrace) in zip([ham[N÷2]], [true])
+
+            ρ = product(superoperator(V,I,μ), ρ₀)
+
+            trace_old = trace(ρ)
+
+            gates = make_sweep( TA.Order1, length(ham), τ) do (j,δt)
+                gate(ham[j], δt, μ)
+            end
+
+            for i=1:steps
+                apply!(gates, ρ, method; maxdim, cutoff)
+            end
+
+            @test all(linkdims(ρ) .<= maxdim)
+
+            # test trace
+            if testtrace
+                @test isapprox(trace(ρ), trace_old; rtol = 1e-8) == expresult
+            end
+
+            Oold = o_f(ρ)
+
+            # truncate down to truncmaxdim, but don't time-evolve
+            # also test three-site gates
+            H′ = op("Id", s[N÷2-1]) * op("Id", s[N÷2]) * op("Id", s[N÷2+1])
+            idGate = gate(H′, 1., μ)
+
+            apply!([idGate], ρ, method; maxdim=truncmaxdim, cutoff)
+
+            Onew = o_f(ρ)
 
             @test linkdim(ρ, N÷2) <= truncmaxdim
 
