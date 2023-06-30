@@ -10,7 +10,7 @@ const DenseTensor = NDTensors.DenseTensor
 
 # for generalizing `dmt` to dense matrices
 ITensors.blockview(T::DenseTensor, ::Block) = T
-ITensors.nzblocks(T::DenseTensor) = [Block(1,1)]
+ITensors.nzblocks(::DenseTensor) = [Block(1,1)]
 const blockview = ITensors.blockview
 
 const tensor = ITensors.tensor
@@ -81,10 +81,10 @@ function dmt(
     Lsum::ITensor,
     Rsum::ITensor;
     maxdim::Int64=typemax(Int64),
-    cutoff::Float64=0.
+    cutoff::Float64=0.,
+    remove_unconnected_component=false
         )::Tuple{ITensor, ITensor}
 
-    maxdim >= 8 || throw("Max dim must be greater than or equal to 7")
 
     sites = sort(inds(ϕ, "Site"), by=sitepos)
     ns = sitepos.(sites)
@@ -101,27 +101,32 @@ function dmt(
 
     QL,qL = full_Q(xL, u, sites[1])
     QR,qR = full_Q(xR, v, sites[2])
-    M = QL * S * conj(QR)
+    M = QL * S * QR
 
     nzblocksM = nzblocks(M)
-    @assert all( b[1]==b[2] for b in nzblocksM )
+    @assert all( b[1]==b[2] for b in nzblocksM ) # ensure M is block diagonal
     unconnected_component = nothing
-
     svds = map(nzblocksM) do b
         bM = matrix(blockview(M.tensor, b))
-        i = relevant_dims(sites[1], qL, b)
+        i = relevant_dims(sites[1], qL, b) # the rows that affect length 2 operators, equal to the onsite space dimension
         bMsub = bM[i+1:end, i+1:end]
 
-        if flux(qL, b)|>iszero && abs(bM[1,1]) > 1e-10
+        if remove_unconnected_component && flux(qL, b)|>iszero && abs(bM[1,1]) > 1e-10
+            @warn "removing connected component"
             unconnected_component = (bM[i+1:end,1:1] * bM[1:1,i+1:end]) / bM[1,1]
-            bMsub = bMsub - unconnected_component
+            bMsub .-= unconnected_component
         end
 
         svd(bMsub)
     end
 
+
+    total_relevant_dims = sum( relevant_dims(sites[1], qL, b) for b in nzblocksM )
+    rank_offset = 2total_relevant_dims + 1 # not sure why there's a 1 here but ¯\_(ツ)_/¯
+
+    maxdim >= rank_offset || throw("Max dim must be greater than or equal to $rank_offset")
     Ss = sort([(res.S for res in svds)...;]; rev=true)
-    cut = min( rank(Ss, cutoff), maxdim-8)
+    cut = min( rank(Ss, cutoff), maxdim-rank_offset)
     new_cutoff = get(Ss, cut+1, 0.)
 
     for (svd2, b) in zip(svds, nzblocksM)
@@ -130,6 +135,7 @@ function dmt(
         new_bMsub = U2 * Diagonal(S2) * Vt2
 
         if flux(qL,b)|>iszero && !isnothing(unconnected_component)
+            @warn "adding connected component"
             new_bMsub .+= unconnected_component
         end
 
@@ -137,11 +143,13 @@ function dmt(
         blockview(M.tensor, b)[end-m+1:end, end-m+1:end] .= new_bMsub
     end
 
-    U3, S3, Vt3, _, u3 = svd(M, qL; cutoff)
+    U3, S3, Vt3, _, u3, v3 = svd(M, qL; cutoff)
     newlink = sim(u3; tags="Link,l=$(ns[1])")
 
-    A = replaceind(U * dag(QL) * U3,  u3, newlink)
-    B = replaceind(S3 * Vt3 * dag(conj(QR)) * Vt, u3, newlink)
+    # A = replaceind(U * dag(QL) * U3,  u3, newlink)
+    # B = replaceind(S3 * Vt3 * dag(conj(QR)) * Vt, u3, newlink)
+    A = replaceind(U * dag(QL) * U3 * S3,  v3, newlink)
+    B = replaceind(Vt3 * dag(QR) * Vt, v3, newlink)
     A, B
 end
 
@@ -154,10 +162,11 @@ end
 
 function apply!(o::ITensor, ρ::MPS, ::DMT; kwargs...)
     ns = sort(findsites(ρ, o))
+    isempty(ns) && throw("Gate and MPS do not share sites")
     N  = length(ns)
     x = ns[1]
 
-    orthogonalize!(ρ, ns[1])
+    orthogonalize!(ρ, ns[1]+1)
 
     ϕ = foldl(*, [ρ[n] for n=ns])
     ϕ = product(o, ϕ)
@@ -181,7 +190,7 @@ function apply!(o::ITensor, ρ::MPS, ::DMT; kwargs...)
 
     newρ = MPS(ψ)
 
-    # following ITensors/mps/abstractmps.jl:1889
+    # following ITensors/mps/abstractmps.jl
     ITensors.setleftlim!(newρ, N - 1)
     ITensors.setrightlim!(newρ, N + 1)
     orthogonalize!(newρ, ns[end] - ns[1] + 1)
