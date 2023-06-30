@@ -111,10 +111,15 @@ Create a function that measures an MPS using the observable `O`. `μ` are the si
 """
 function probe(O::ITensor, μ::Vector{<:Index}; realval=true)
     if inds(O) |> isempty
-        return ρ -> O[1]
+        return _ -> O[1]
     end
 
     SO = superoperator(O,I,μ)
+
+    # the measurement pipeline is
+    #    ρ -> apply SO -> trace
+    # For efficiency, we compose the last two
+    #    tSO ≡ (trace ∘ apply SO)
     tSO = SO * foldl(*, (dag(tracer(x)') for x in inds(SO; plev=0)))
 
     function wrapper(ρ::MPS)

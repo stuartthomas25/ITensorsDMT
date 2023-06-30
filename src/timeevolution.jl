@@ -29,9 +29,12 @@ function gate(
         end
     end
 
-    # return exp(clean(liouvillian), ishermitian=true)
-    # return exp(liouvillian)
-    return exp(clean(liouvillian))
+    L = clean(liouvillian)
+    if L.tensor.storage isa NDTensors.EmptyStorage # this can happen if the Liouvillian is the identity
+        return exp(liouvillian)
+    end
+
+    return exp(L)
 
 end
 
