@@ -21,7 +21,7 @@ rank(S::Vector{<:Number}, cutoff::Float64) = something( findfirst(x->x<cutoff, S
 function _empty_Qstorage(T::BlockSparseTensor; tags="Link,q")
     u = first(inds(T))
     q = Index(u.space; tags, dir=-dir(u) )
-    nzblocksQ = [Block(b[1], b[1]) for b=nzblocks(T)]
+    nzblocksQ = [Block(i,i) for i in eachindex(space(q))]
     BlockSparseTensor(eltype(T), undef, nzblocksQ, (u,q))
 end
 
@@ -45,20 +45,26 @@ function full_Q(iT::ITensor, u::Index, μ::Index)
     QT = _empty_Qstorage(T)
     q = last(inds(QT))
 
-    for (b, bQ) in zip( nzblocks(T), nzblocks(QT) )
-        M = blockview(T, b)
-        Qthin,_ = M|>matrix|>qr
-        Qblock = Qthin[:,:] # get full (non-thin) matrix
+    for b in nzblocks(QT)
+        Tblocks = findall(b_->b_[1] == b[1], nzblocks(T))
+        if !isempty(Tblocks)
+            M = blockview(T, nzblocks(T)[only(Tblocks)])
+            Qthin,_ = M|>matrix|>qr
+            Qblock = Qthin[:,:] # get full (non-thin) matrix
 
-        blockview(QT, bQ) .= Qblock
+            blockview(QT, b) .= Qblock
+        else
+            dim = space(u)[b[1]]|>last
+            blockview(QT, b) .= Matrix(I, dim, dim)
+        end
     end
-    itensor(QT),q
+    itensor(QT), q
 end
 
 # for sparse
 function relevant_dims(x::Index{<:Vector}, q::Index{<:Vector}, b::Block)
     dims = Dict(x.space)
-    dims[qn(q, b[1])]
+    get(dims, qn(q, b[1]), 0)
 end
 function flux(q::Index{<:Vector}, b::Block; kind::String="Nf")
     val(qn(q, b[1]), kind)
@@ -92,7 +98,7 @@ function dmt(
     Lis = isnothing(leftlink) ? IndexSet(sites[1]) : IndexSet((leftlink, sites[1]))
 
     # take the first SVD
-    U, S, Vt, _, u, v  = svd(ϕ, Lis...; cutoff=cutoff)
+    U, S, Vt, _, u, v  = svd(ϕ, Lis...; cutoff)
 
     # Calculate the change of basis matrices QL and QR
     #if ϕ has more than two sites, trace over the extra ones for now
@@ -104,6 +110,7 @@ function dmt(
     M = QL * S * QR
 
     nzblocksM = nzblocks(M)
+
     @assert all( b[1]==b[2] for b in nzblocksM ) # ensure M is block diagonal
     unconnected_component = nothing
     svds = map(nzblocksM) do b
@@ -117,17 +124,17 @@ function dmt(
             bMsub .-= unconnected_component
         end
 
-        svd(bMsub)
+        svd(bMsub; full=true)
     end
 
 
     total_relevant_dims = sum( relevant_dims(sites[1], qL, b) for b in nzblocksM )
-    rank_offset = 2total_relevant_dims + 1 # not sure why there's a 1 here but ¯\_(ツ)_/¯
+    rank_offset = 2total_relevant_dims
 
     maxdim >= rank_offset || throw("Max dim must be greater than or equal to $rank_offset")
     Ss = sort([(res.S for res in svds)...;]; rev=true)
     cut = min( rank(Ss, cutoff), maxdim-rank_offset)
-    new_cutoff = get(Ss, cut+1, 0.)
+    new_cutoff = get(Ss, cut, 0.)
 
     for (svd2, b) in zip(svds, nzblocksM)
         U2, S2, Vt2 = svd2.U, svd2.S, svd2.Vt
@@ -143,13 +150,11 @@ function dmt(
         blockview(M.tensor, b)[end-m+1:end, end-m+1:end] .= new_bMsub
     end
 
-    U3, S3, Vt3, _, u3, v3 = svd(M, qL; cutoff)
+    U3, S3, Vt3, _, u3 = svd(M, qL; cutoff)
     newlink = sim(u3; tags="Link,l=$(ns[1])")
 
     A = replaceind(U * dag(QL) * U3,  u3, newlink)
     B = replaceind(S3 * Vt3 * dag(QR) * Vt, u3, newlink)
-    # A = replaceind(U * dag(QL) * U3 * S3,  v3, newlink)
-    # B = replaceind(Vt3 * dag(QR) * Vt, v3, newlink)
     A, B
 end
 

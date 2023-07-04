@@ -73,8 +73,6 @@ Combine the in and out indices of an DMPO to make an MPS
 function ITensors.MPS(ρ::MPO, μ::Vector{<:Index})::MPS
     s = siteinds(first, ρ; plev=0)
     newdata = map(eachindex(ρ)) do i
-        # c = combiner(s[i], dag(s[i]'); dir=ITensors.Out)
-        # cx = combinedind(c)
         U = changeOfBasis(s[i], μ[i])
         ρ.data[i] * U
     end

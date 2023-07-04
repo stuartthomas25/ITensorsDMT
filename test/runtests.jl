@@ -297,8 +297,6 @@ end
     μ           = siteinds("FermionOperator", N; conserve_nf)
     ham         = Models.MOH(s)
     ρ₀          = MPS(μ, "Id")
-    # O         = op("Z", s[N÷2-1]) * op("Z", s[N÷2+1]) # a three site operator to test DMT's three site guarantee
-
 
     # a three site operator to test DMT's three site guarantee
     o_f         = probe([op("N", s[i]) * op("N", s[i+1]) * op("N", s[i+2]) for i in 1:N-2], μ)
