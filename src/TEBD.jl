@@ -2,7 +2,6 @@ module TEBD
 
 using Random
 using ITensors
-using ProgressBars
 using LinearAlgebra
 abstract type TruncationMethod end
 
