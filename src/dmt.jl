@@ -88,7 +88,7 @@ function dmt(
     Rsum::ITensor;
     maxdim::Int64=typemax(Int64),
     cutoff::Float64=0.,
-    remove_unconnected_component=false
+    remove_unconnected_component=true
         )::Tuple{ITensor, ITensor}
 
 
