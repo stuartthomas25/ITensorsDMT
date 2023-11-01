@@ -148,11 +148,12 @@ function dmt(
         blockview(M.tensor, b)[end-m+1:end, end-m+1:end] .= new_bMsub
     end
 
-    U3, S3, Vt3, _, u3 = svd(M, qL; cutoff)
+    ϕ′ = U * dag(QL) * M * dag(QR) * Vt
+    U3, S3, Vt3, _, u3 = svd(ϕ′, Lis...; cutoff)
     newlink = sim(u3; tags="Link,l=$(ns[1])")
 
-    A = replaceind(U * dag(QL) * U3,  u3, newlink)
-    B = replaceind(S3 * Vt3 * dag(QR) * Vt, u3, newlink)
+    A = replaceind(U3,  u3, newlink)
+    B = replaceind(S3 * Vt3, u3, newlink)
     A, B
 end
 
