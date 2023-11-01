@@ -7,14 +7,14 @@ Turn two ITensors `A` and `B` into a superoperator A⊗B using the basis of `μ`
 ⟨σᵃ, A σᵇ B⟩ = Tr[σᵃ† A σᵇ B] = σᵃ*₃₀A₃₂σᵇ₂₁B₁₀
 """
 function superoperator(A::ITensor, B::ITensor, μ::Vector{<:Index})::ITensor
-    @assert ndims(A) == ndims(B)
-    s = dag(inds(B; plev=0))
-    A′ = replaceprime(A, 0=>2, 1=>3)
+    @assert issetequal(inds(A; tags="Site"), inds(B; tags="Site"))
+    s = dag(inds(B; plev=0, tags="Site"))
+    A′ = replaceprime(A, 0=>2, 1=>3; tags="Site")
     AxB = A′*B
     for x=s
         y = μ[sitepos(x)]
         innerU = changeOfBasis(x', dag(y))
-        outerU = swapprime(changeOfBasis(x'', dag(y')), 2=>0)
+        outerU = swapprime(changeOfBasis(x'', dag(y')), 2=>0; tags="Site")
         AxB = (AxB * innerU) * dag(outerU)
     end
     AxB
@@ -29,18 +29,48 @@ function superoperator(T::ITensor, M::UniformScaling, μ::Vector{<:Index})
     if isempty(inds(T))
         return T
     end
-    M.λ * superoperator(T, op("Id", collect(inds(dag(T), plev=0))), μ)
+    M.λ * superoperator(T, op("Id", collect(inds(dag(T), plev=0, tags="Site"))), μ)
 end
 
 function superoperator(M::UniformScaling, T::ITensor, μ::Vector{<:Index})
     if isempty(inds(T))
         return T
     end
-    M.λ * superoperator(op("Id", collect(inds(dag(T), plev=0))), T, μ)
+    M.λ * superoperator(op("Id", collect(inds(dag(T), plev=0, tags="Site"))), T, μ)
+end
+
+function superoperator(A::MPO, M::UniformScaling, μ::Vector{<:Index})
+    if isempty(A)
+        return A
+    end
+
+    # multiplying by the identity preserves the orthogonality center
+    MPO([superoperator(T,M,μ) for T in A], A.llim, A.rlim)
+end
+function superoperator(M::UniformScaling, A::MPO, μ::Vector{<:Index})
+    if isempty(A)
+        return A
+    end
+
+    # multiplying by the identity preserves the orthogonality center
+    MPO([superoperator(M,T,μ) for T in A], A.llim, A.rlim)
+end
+
+function superoperator(A::MPO, B::MPO, μ::Vector{<:Index})
+    if isempty(A)
+        return A
+    end
+    @assert siteinds(A) == siteinds(B)
+
+    # reset orthogonality center
+    MPO([superoperator(Ta,Tb,μ) for (Ta,Tb) in zip(A,B)], 0, length(A))
 end
 
 superoperator(M::UniformScaling, N::UniformScaling, μ::Vector{<:Index}) =
     M.λ * N.λ * op("Id", dag(μ))
+
+superoperator(::Type{MPO}, M::UniformScaling, N::UniformScaling, μ::Vector{<:Index}) =
+    M.λ * N.λ * MPO(μ, "Id")
 
 changeOfBasis(x::Index, y::Index) =
     +( map(changeOfBasisTensors(sitetype(y), x) |> enumerate) do (i,T)
@@ -109,6 +139,11 @@ changeOfBasisTensors(::SiteType"PauliOperator", x::Index) =
 ITensors.space(::SiteType"PauliOperator") = 4
 
 ITensors.state(::StateName"Id", ::SiteType"PauliOperator") = [1.0, 0, 0, 0]
+ITensors.state(::StateName"X", ::SiteType"PauliOperator") = [0, 1.0, 0, 0]
+ITensors.state(::StateName"Y", ::SiteType"PauliOperator") = [0, 0, 1.0, 0]
+ITensors.state(::StateName"Z", ::SiteType"PauliOperator") = [0, 0, 0, 1.0]
+ITensors.state(::StateName"InfTemp", ::SiteType"PauliOperator") = [1.0, 0, 0, 0]
+
 
 
 
