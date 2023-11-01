@@ -119,7 +119,6 @@ function dmt(
         bMsub = bM[i+1:end, i+1:end]
 
         if remove_unconnected_component && flux(qL, b)|>iszero && abs(bM[1,1]) > 1e-10
-            @warn "removing connected component"
             unconnected_component = (bM[i+1:end,1:1] * bM[1:1,i+1:end]) / bM[1,1]
             bMsub .-= unconnected_component
         end
@@ -142,7 +141,6 @@ function dmt(
         new_bMsub = U2 * Diagonal(S2) * Vt2
 
         if flux(qL,b)|>iszero && !isnothing(unconnected_component)
-            @warn "adding connected component"
             new_bMsub .+= unconnected_component
         end
 
