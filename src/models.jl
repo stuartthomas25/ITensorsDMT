@@ -77,7 +77,7 @@ module Models
         hs
     end
 
-    function MOH(s::Vector{<:Index}; t1::Float64=1., t2::Float64=1., V::Float64=1., pbc=false)::Vector{ITensor}
+    function MOH(s::Vector{<:Index}; t1::Float64=1., t2::Float64=1., V::Float64=1., pbc=false, μ::Float64=0.)::Vector{ITensor}
         hs = ITensor[]
         N = length(s)
         for j=2:N-1
@@ -95,6 +95,10 @@ module Models
 
             hj +=  V/2  * ( op("N",  s1) * op("N",  s2) * op("Id", s3) +
                             op("Id", s1) * op("N",  s2) * op("N",  s3) )
+
+            hj +=  μ/3  * ( op("N",  s1) * op("Id", s2) * op("Id", s3) +
+                            op("Id", s1) * op("N",  s2) * op("Id", s3) +
+                            op("Id", s1) * op("Id", s2) * op("N",  s3) )
 
 
             if j == 2 && !pbc
@@ -138,6 +142,21 @@ module Models
             push!(hs, hj)
         end
         hs
+    end
+
+    function long_range_XY(s::Vector{<:Index}; J=1., α=3.)::MPO
+        H  = OpSum()
+        N = length(s)
+
+        for i=1:N
+            for j=(i+1):N
+                c = J / abs(i-j)^α
+                H += c, "X", i, "X", j
+                H += c, "Y", i, "Y", j
+            end
+        end
+
+        MPO(H,s)
     end
 
 end
