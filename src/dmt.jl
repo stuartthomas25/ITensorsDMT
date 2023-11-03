@@ -4,7 +4,6 @@ struct DMT <: TruncationMethod end
 struct NaiveTruncation <: TruncationMethod end
 
 
-
 const BlockSparseTensor = NDTensors.BlockSparseTensor
 const DenseTensor = NDTensors.DenseTensor
 
@@ -88,8 +87,9 @@ function dmt(
     Rsum::ITensor;
     maxdim::Int64=typemax(Int64),
     cutoff::Float64=0.,
-    remove_unconnected_component=true
-        )::Tuple{ITensor, ITensor}
+    remove_unconnected_component=true,
+    ortho="left"
+        )::Tuple{ITensor, ITensor, <:Spectrum}
 
 
     sites = sort(inds(ϕ, "Site"), by=sitepos)
@@ -149,12 +149,19 @@ function dmt(
     end
 
     ϕ′ = U * dag(QL) * M * dag(QR) * Vt
-    U3, S3, Vt3, _, u3 = svd(ϕ′, Lis...; cutoff)
+    U3, S3, Vt3, spec, u3 = svd(ϕ′, Lis...; cutoff)
     newlink = sim(u3; tags="Link,l=$(ns[1])")
 
-    A = replaceind(U3,  u3, newlink)
-    B = replaceind(S3 * Vt3, u3, newlink)
-    A, B
+    if ortho=="left"
+        L, R = U3, S3 * Vt3
+    elseif ortho=="right"
+        L, R = U3 * S3, Vt3
+    else
+        error("In `dmt`, ortho keyword $ortho not supported. Supported options are `left` or `right`.")
+    end
+    L = replaceind(L, u3, newlink)
+    R = replaceind(R, u3, newlink)
+    L, R, spec
 end
 
 
@@ -227,6 +234,61 @@ function qrDMT(x::ITensor)
     res = qr(A)
     m = ITensors.dim(α)
     res.Q*Matrix(I,m,m), Matrix(res.R) # QR decomp is thin by default
+end
+
+
+""" Overwrite the default `ITensors.replacebond!` to add a `dmt` option for `which_decomp` """
+function ITensors.replacebond!(M::MPS, b::Int, phi::ITensor; kwargs...)
+    ortho::String = get(kwargs, :ortho, "left")
+    swapsites::Bool = get(kwargs, :swapsites, false)
+    which_decomp::Union{String,Nothing} = get(kwargs, :which_decomp, nothing)
+    normalize::Bool = get(kwargs, :normalize, false)
+
+    indsMb = inds(M[b])
+    if swapsites
+        sb = siteind(M, b)
+        sbp1 = siteind(M, b + 1)
+        indsMb = replaceind(indsMb, sb, sbp1)
+    end
+
+    if which_decomp=="dmt"
+        Msums = map(M) do T
+            x = only(inds(T; tags="Site", plev=0))
+            δ = tracer(x)
+            length(inds(δ)) > 1 && throw("MPS must be in an operator basis.")
+            T * δ
+        end
+        Lsum = foldl(*, Msums[1:b-1])
+        Rsum = foldl(*, Msums[b+2:end])
+        kw = filter(r->first(r)∈[:maxdim, :cutoff], kwargs)
+
+        L, R, spec = dmt(phi, Lsum, Rsum; ortho, kw...)
+    else
+        L, R, spec = factorize(
+            phi, indsMb; which_decomp=which_decomp, tags=tags(linkind(M, b)), kwargs...
+                )
+    end
+
+    leftlim = ITensors.leftlim
+    setleftlim! = ITensors.setleftlim!
+    rightlim = ITensors.rightlim
+    setrightlim! = ITensors.setrightlim!
+    M[b] = L
+    M[b + 1] = R
+    if ortho == "left"
+        leftlim(M) == b - 1 && setleftlim!(M, leftlim(M) + 1)
+        rightlim(M) == b + 1 && setrightlim!(M, rightlim(M) + 1)
+        normalize && (M[b + 1] ./= norm(M[b + 1]))
+    elseif ortho == "right"
+        leftlim(M) == b && setleftlim!(M, leftlim(M) - 1)
+        rightlim(M) == b + 2 && setrightlim!(M, rightlim(M) - 1)
+        normalize && (M[b] ./= norm(M[b]))
+    else
+        error(
+            "In replacebond!, got ortho = $ortho, only currently supports `left` and `right`."
+        )
+    end
+    return spec
 end
 
 export apply!,
