@@ -1,33 +1,44 @@
 using LinearAlgebra
+using ITensors.NDTensors
+using ITensorMPS: setleftlim!, setrightlim!
+import Distributed
 
 struct DMT <: TruncationMethod end
 struct NaiveTruncation <: TruncationMethod end
+const iscu = NDTensors.iscu
 
 
-const BlockSparseTensor = NDTensors.BlockSparseTensor
-const DenseTensor = NDTensors.DenseTensor
+# const BlockSparseTensor = NDTensors.BlockSparseTensor
+# const DenseTensor = NDTensors.DenseTensor
+# const Dense = NDTensors.Dense
 
 # for generalizing `dmt` to dense matrices
 ITensors.blockview(T::DenseTensor, ::Block) = T
 ITensors.nzblocks(::DenseTensor) = [Block(1,1)]
-const blockview = ITensors.blockview
+# const blockview = ITensors.blockview
 
-const tensor = ITensors.tensor
+# const tensor = ITensors.tensor
 Base.one(::Type{ITensor}) = ITensor(1.)
 
-rank(S::Vector{<:Number}, cutoff::Float64) = something( findfirst(x->x<cutoff, S), length(S) + 1) - 1
+rank(S::AbstractVector{<:Number}, cutoff::Float64) = something( findfirst(x->abs(x)<cutoff, S), length(S) + 1) - 1
 
 function _empty_Qstorage(T::BlockSparseTensor; tags="Link,q")
+    use_gpu = NDTensors.iscu(T)
+    cu_or_not(x) = use_gpu ? cu(x) : x
+
     u = first(inds(T))
     q = Index(u.space; tags, dir=-dir(u) )
-    nzblocksQ = [Block(i,i) for i in eachindex(space(q))]
-    BlockSparseTensor(eltype(T), undef, nzblocksQ, (u,q))
+    nzblocksQ = [(Block(i,i) for i in eachindex(space(q)))...]
+    cu_or_not( BlockSparseTensor(eltype(T), undef, nzblocksQ, (u,q)) )
 end
 
 function _empty_Qstorage(T::DenseTensor, tags="Link,q")
+    use_gpu = NDTensors.iscu(T)
+    cu_or_not(x) = use_gpu ? cu(x) : x
+
     u = first(inds(T))
     q = Index(u.space; tags)
-    DenseTensor(eltype(T), undef, (u,q))
+    cu_or_not( DenseTensor(eltype(T), undef, (u,q)) )
 end
 
 
@@ -40,6 +51,10 @@ Calculate the full QR composition of a BlockSparse ITensor and return the non-th
 
 """
 function full_Q(iT::ITensor, u::Index, μ::Index)
+
+    use_gpu = iscu(iT)
+    cu_or_not_Matrix(x...) = use_gpu ? CuMatrix(x...) : Matrix(x...)
+
     T = tensor( permute(iT, u, μ; allow_alias=true) )
     QT = _empty_Qstorage(T)
     q = last(inds(QT))
@@ -49,12 +64,16 @@ function full_Q(iT::ITensor, u::Index, μ::Index)
         if !isempty(Tblocks)
             M = blockview(T, nzblocks(T)[only(Tblocks)])
             Qthin,_ = M|>matrix|>qr
-            Qblock = Qthin[:,:] # get full (non-thin) matrix
+            # @show typeof(Qthin)
+            # Qblock = collect(Qthin[:,:])
+            Qblock = Qthin * cu_or_not_Matrix(I,size(Qthin)...) # make dense
 
-            blockview(QT, b) .= Qblock
+            blockview(QT, b).storage .= Dense(Qblock) # assign storage directly for GPU compatibility
+            # blockview(QT, b) .= Qblock # assign storage directly for GPU compatibility
         else
             dim = space(u)[b[1]]|>last
-            blockview(QT, b) .= Matrix(I, dim, dim)
+            blockview(QT, b).storage .= Dense(cu_or_not_Matrix(I, dim, dim))
+            # blockview(QT, b) .= cu_or_not_Matrix(I, dim, dim)
         end
     end
     itensor(QT), q
@@ -65,13 +84,13 @@ function relevant_dims(x::Index{<:Vector}, q::Index{<:Vector}, b::Block)
     dims = Dict(x.space)
     get(dims, qn(q, b[1]), 0)
 end
-function flux(q::Index{<:Vector}, b::Block; kind::String="Nf")
-    val(qn(q, b[1]), kind)
+
+function remove_smallest(v::T, cutoff)::T where {T}
+    map(s->abs(s)>cutoff ? s : zero(s), v)
 end
 
 # for dense
 relevant_dims(x::Index{Int64}, ::Index{Int64}, ::Block) = dim(x)
-flux(q::Index{Int64}, b::Block; kind::String="Nf") = 0
 
 """
 Apply Density Matrix Truncation to the left-most two sites of a multi-site tensor.
@@ -91,8 +110,11 @@ function dmt(
     ortho="left"
         )::Tuple{ITensor, ITensor, <:Spectrum}
 
+    use_gpu = iscu(ϕ)
+    _map = (ITensors.using_threaded_blocksparse() && !use_gpu) ? Distributed.pmap : map
+    cu_or_not(x) = use_gpu ? cu(x) : x
 
-    sites = sort(inds(ϕ, "Site"), by=sitepos)
+    sites = sort([inds(ϕ, "Site")...], by=sitepos)
     ns = sitepos.(sites)
     leftlink = commonind(Lsum, ϕ)
     Lis = isnothing(leftlink) ? IndexSet(sites[1]) : IndexSet((leftlink, sites[1]))
@@ -102,25 +124,39 @@ function dmt(
 
     # Calculate the change of basis matrices QL and QR
     #if ϕ has more than two sites, trace over the extra ones for now
-    xR = foldl(*, [Vt, Rsum, (tracer(x) for x in sites[3:end])... ])
+    xR = foldl(*, [Vt, Rsum, (cu_or_not(tracer(x)) for x in sites[3:end])... ])
     xL = Lsum * U
 
-    QL,qL = full_Q(xL, u, sites[1])
-    QR,qR = full_Q(xR, v, sites[2])
+    QL, qL = full_Q(xL, u, sites[1])
+    QR, qR = full_Q(xR, v, sites[2])
     M = QL * S * QR
 
     nzblocksM = nzblocks(M)
+    # display(nzblocksM)
 
     @assert all( b[1]==b[2] for b in nzblocksM ) # ensure M is block diagonal
     unconnected_component = nothing
-    svds = map(nzblocksM) do b
+
+    uc_block = if remove_unconnected_component # block with the unconnected component
+        nzblocksM[ findfirst(b->qL isa Index{Int} || iszero(flux((qL,qR), b)), nzblocksM) ]
+    else
+        Block()
+    end
+
+    svds = CUDA.@allowscalar _map(nzblocksM) do b
         bM = matrix(blockview(M.tensor, b))
         i = relevant_dims(sites[1], qL, b) # the rows that affect length 2 operators, equal to the onsite space dimension
         bMsub = bM[i+1:end, i+1:end]
 
-        if remove_unconnected_component && flux(qL, b)|>iszero && abs(bM[1,1]) > 1e-10
+        if b==uc_block && abs(bM[1,1]) > 1e-10
+            isnothing(unconnected_component) || throw("multiple unconnected components defined")
             unconnected_component = (bM[i+1:end,1:1] * bM[1:1,i+1:end]) / bM[1,1]
+            # @info "subtracting unconnected_component"
             bMsub .-= unconnected_component
+        end
+
+        if isempty(bMsub) # CUDA has issues with empty matrices
+            return SVD(bMsub, eltype(bMsub)[], bMsub)
         end
 
         svd(bMsub; full=true)
@@ -131,21 +167,40 @@ function dmt(
     rank_offset = 2total_relevant_dims
 
     maxdim >= rank_offset || throw("Max dim must be greater than or equal to $rank_offset")
-    Ss = sort([(res.S for res in svds)...;]; rev=true)
+
+    # display( [(res.S for res in svds)...;] )
+    # display(svds)
+
+    CUDA.@allowscalar if !isempty(svds) # CUDA has an issue sorting empty arrays
+        Ss = sort([(res.S for res in svds)...;]; rev=true, by=abs)
+    else
+        Ss = [(res.S for res in svds)...;]
+    end
+
+    # @show typeof(Ss)
     cut = min( rank(Ss, cutoff), maxdim-rank_offset)
-    new_cutoff = get(Ss, cut, 0.)
+    new_cutoff = CUDA.@allowscalar abs(get(Ss, cut, 0.))
 
     for (svd2, b) in zip(svds, nzblocksM)
         U2, S2, Vt2 = svd2.U, svd2.S, svd2.Vt
-        S2 = [ x>=new_cutoff ? x : 0. for x∈S2 ]
+        # S2 = cu_or_not( [ x>=new_cutoff ? x : 0. for x∈S2 ] )
+        # @show remove_smallest(S2, new_cutoff)
+        # @show cu_or_not( remove_smallest(S2, new_cutoff) )
+        S2 = cu_or_not( remove_smallest(S2, new_cutoff) )
+        # @show S2
         new_bMsub = U2 * Diagonal(S2) * Vt2
 
-        if flux(qL,b)|>iszero && !isnothing(unconnected_component)
+        if b==uc_block && !isnothing(unconnected_component)
             new_bMsub .+= unconnected_component
         end
 
         m = length(S2)
-        blockview(M.tensor, b)[end-m+1:end, end-m+1:end] .= new_bMsub
+        # blockview(M.tensor, b)[end-m+1:end, end-m+1:end] .= new_bMsub
+
+        blockM = blockview(M.tensor, b)
+        blockMinds = LinearIndices(blockM)[end-m+1:end, end-m+1:end]
+        blockM.storage.data[blockMinds] .= new_bMsub
+
     end
 
     ϕ′ = U * dag(QL) * M * dag(QR) * Vt
@@ -172,6 +227,9 @@ function apply!(gates::Vector{ITensor}, ρ::MPS, ::DMT; kwargs...)
 end
 
 function apply!(o::ITensor, ρ::MPS, ::DMT; kwargs...)
+    use_gpu = NDTensors.iscu(o)
+    cu_or_not(x) = use_gpu ? cu(x) : x
+
     ns = sort(findsites(ρ, o))
     isempty(ns) && throw("Gate and MPS do not share sites")
     N  = length(ns)
@@ -180,11 +238,18 @@ function apply!(o::ITensor, ρ::MPS, ::DMT; kwargs...)
     orthogonalize!(ρ, ns[1]+1)
 
     ϕ = foldl(*, [ρ[n] for n=ns])
+
+    # check if this is prop to identity
+    id_tensor = contract((cu_or_not(hastags(i, "Site") ? state("Id", i) : onehot(i=>1)) for i=inds(ϕ))...)
+    if isapprox(ϕ ./ sum(ϕ), id_tensor; atol=1e-2)
+        return
+    end
+
     ϕ = product(o, ϕ)
 
     ρsums = map(ρ) do T
         x = only(inds(T; tags="Site", plev=0))
-        T * tracer(x)
+        T * cu_or_not(tracer(x))
     end
 
     Lsum = foldl(*, ρsums[1:ns[1]-1])
@@ -194,7 +259,8 @@ function apply!(o::ITensor, ρ::MPS, ::DMT; kwargs...)
     for n in 1:(N-1)
         L, R = dmt(ϕ, Lsum, Rsum; kwargs...)
         ψ[n] = L
-        Lsum = Lsum * (L * tracer(inds(L; tags="Site") |> only))
+        x = inds(L; tags="Site") |> only
+        Lsum = Lsum * (L * cu_or_not(tracer(x)))
         ϕ = R
     end
     ψ[N] = ϕ
@@ -202,8 +268,8 @@ function apply!(o::ITensor, ρ::MPS, ::DMT; kwargs...)
     newρ = MPS(ψ)
 
     # following ITensors/mps/abstractmps.jl
-    ITensors.setleftlim!(newρ, N - 1)
-    ITensors.setrightlim!(newρ, N + 1)
+    setleftlim!(newρ, N - 1)
+    setrightlim!(newρ, N + 1)
     orthogonalize!(newρ, ns[end] - ns[1] + 1)
 
     ρ[ns[1]:ns[end]] = newρ
@@ -211,7 +277,7 @@ function apply!(o::ITensor, ρ::MPS, ::DMT; kwargs...)
 end
 
 
-function apply!(gates::Vector{ITensor}, ψ::ITensors.AbstractMPS, ::NaiveTruncation; kwargs...)
+function apply!(gates::Vector{ITensor}, ψ::ITensorMPS.AbstractMPS, ::NaiveTruncation; kwargs...)
     newψ = apply(gates, ψ; kwargs...)
     ψ.data = newψ.data
     ψ.rlim = newψ.rlim
@@ -222,7 +288,7 @@ end
 """
 default to `NaiveTruncation`
 """
-apply!(gates::Vector{ITensor}, ψ::ITensors.AbstractMPS; kwargs...) =
+apply!(gates::Vector{ITensor}, ψ::ITensorMPS.AbstractMPS; kwargs...) =
     apply!(gates, ψ, NaiveTruncation(); kwargs...)
 
 # dense DMT
@@ -230,66 +296,68 @@ apply!(gates::Vector{ITensor}, ψ::ITensors.AbstractMPS; kwargs...) =
 function qrDMT(x::ITensor)
     μ = inds(x; tags="Site")[1]
     α = inds(x; tags="Link")[1]
-    A = Array(x, (α, μ))
+    # A = Array(x, (α, μ))
+    A = array(perumte(x, (α, μ)))
     res = qr(A)
     m = ITensors.dim(α)
-    res.Q*Matrix(I,m,m), Matrix(res.R) # QR decomp is thin by default
+    matT = typeof(A)
+    res.Q*matT(I,m,m), matT(res.R) # QR decomp is thin by default
 end
 
 
-""" Overwrite the default `ITensors.replacebond!` to add a `dmt` option for `which_decomp` """
-function ITensors.replacebond!(M::MPS, b::Int, phi::ITensor; kwargs...)
-    ortho::String = get(kwargs, :ortho, "left")
-    swapsites::Bool = get(kwargs, :swapsites, false)
-    which_decomp::Union{String,Nothing} = get(kwargs, :which_decomp, nothing)
-    normalize::Bool = get(kwargs, :normalize, false)
+# """ Overwrite the default `ITensors.replacebond!` to add a `dmt` option for `which_decomp` """
+# function ITensors.replacebond!(M::MPS, b::Int, phi::ITensor; kwargs...)
+#     ortho::String = get(kwargs, :ortho, "left")
+#     swapsites::Bool = get(kwargs, :swapsites, false)
+#     which_decomp::Union{String,Nothing} = get(kwargs, :which_decomp, nothing)
+#     normalize::Bool = get(kwargs, :normalize, false)
 
-    indsMb = inds(M[b])
-    if swapsites
-        sb = siteind(M, b)
-        sbp1 = siteind(M, b + 1)
-        indsMb = replaceind(indsMb, sb, sbp1)
-    end
+#     indsMb = inds(M[b])
+#     if swapsites
+#         sb = siteind(M, b)
+#         sbp1 = siteind(M, b + 1)
+#         indsMb = replaceind(indsMb, sb, sbp1)
+#     end
 
-    if which_decomp=="dmt"
-        Msums = map(M) do T
-            x = only(inds(T; tags="Site", plev=0))
-            δ = tracer(x)
-            length(inds(δ)) > 1 && throw("MPS must be in an operator basis.")
-            T * δ
-        end
-        Lsum = foldl(*, Msums[1:b-1])
-        Rsum = foldl(*, Msums[b+2:end])
-        kw = filter(r->first(r)∈[:maxdim, :cutoff], kwargs)
+#     if which_decomp=="dmt"
+#         Msums = map(M) do T
+#             x = only(inds(T; tags="Site", plev=0))
+#             δ = tracer(x)
+#             length(inds(δ)) > 1 && throw("MPS must be in an operator basis.")
+#             T * δ
+#         end
+#         Lsum = foldl(*, Msums[1:b-1])
+#         Rsum = foldl(*, Msums[b+2:end])
+#         kw = filter(r->first(r)∈[:maxdim, :cutoff], kwargs)
 
-        L, R, spec = dmt(phi, Lsum, Rsum; ortho, kw...)
-    else
-        L, R, spec = factorize(
-            phi, indsMb; which_decomp=which_decomp, tags=tags(linkind(M, b)), kwargs...
-                )
-    end
+#         L, R, spec = dmt(phi, Lsum, Rsum; ortho, kw...)
+#     else
+#         L, R, spec = factorize(
+#             phi, indsMb; which_decomp=which_decomp, tags=tags(linkind(M, b)), kwargs...
+#                 )
+#     end
 
-    leftlim = ITensors.leftlim
-    setleftlim! = ITensors.setleftlim!
-    rightlim = ITensors.rightlim
-    setrightlim! = ITensors.setrightlim!
-    M[b] = L
-    M[b + 1] = R
-    if ortho == "left"
-        leftlim(M) == b - 1 && setleftlim!(M, leftlim(M) + 1)
-        rightlim(M) == b + 1 && setrightlim!(M, rightlim(M) + 1)
-        normalize && (M[b + 1] ./= norm(M[b + 1]))
-    elseif ortho == "right"
-        leftlim(M) == b && setleftlim!(M, leftlim(M) - 1)
-        rightlim(M) == b + 2 && setrightlim!(M, rightlim(M) - 1)
-        normalize && (M[b] ./= norm(M[b]))
-    else
-        error(
-            "In replacebond!, got ortho = $ortho, only currently supports `left` and `right`."
-        )
-    end
-    return spec
-end
+#     leftlim = ITensorMPS.leftlim
+#     setleftlim! = ITensorMPS.setleftlim!
+#     rightlim = ITensorMPS.rightlim
+#     setrightlim! = ITensorMPS.setrightlim!
+#     M[b] = L
+#     M[b + 1] = R
+#     if ortho == "left"
+#         leftlim(M) == b - 1 && setleftlim!(M, leftlim(M) + 1)
+#         rightlim(M) == b + 1 && setrightlim!(M, rightlim(M) + 1)
+#         normalize && (M[b + 1] ./= norm(M[b + 1]))
+#     elseif ortho == "right"
+#         leftlim(M) == b && setleftlim!(M, leftlim(M) - 1)
+#         rightlim(M) == b + 2 && setrightlim!(M, rightlim(M) - 1)
+#         normalize && (M[b] ./= norm(M[b]))
+#     else
+#         error(
+#             "In replacebond!, got ortho = $ortho, only currently supports `left` and `right`."
+#         )
+#     end
+#     return spec
+# end
 
 export apply!,
        DMT,

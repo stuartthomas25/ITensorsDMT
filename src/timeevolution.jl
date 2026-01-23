@@ -12,7 +12,7 @@ function gate(
     liouvillian = 1im * (conj(δt) * hL - δt * hR)
 
     # add Lindbladians for open system
-    l = sort(inds(h, plev=0), by=sitepos)
+    l = sort([inds(h, plev=0)...], by=sitepos)
     idT = superoperator(I, I, commoninds(hL, μ))
     for s=l
         Ls = dissipator(noise, s)

@@ -9,7 +9,7 @@ Turn two ITensors `A` and `B` into a superoperator A⊗B using the basis of `μ`
 function superoperator(A::ITensor, B::ITensor, μ::Vector{<:Index})::ITensor
     @assert issetequal(inds(A; tags="Site"), inds(B; tags="Site"))
     s = dag(inds(B; plev=0, tags="Site"))
-    A′ = replaceprime(A, 0=>2, 1=>3; tags="Site")
+    A′ = prime(A, 2; tags="Site")
     AxB = A′*B
     for x=s
         y = μ[sitepos(x)]
@@ -84,7 +84,7 @@ MPO(ρ::MPS, s)
 
 Separate the indices of an MPS to make an MPO
 """
-function ITensors.MPO(ψ::MPS, s::Vector{<:Index})::MPO
+function ITensorMPS.MPO(ψ::MPS, s::Vector{<:Index})::MPO
     μ = siteinds(only, ψ)
     newdata = map(eachindex(ψ)) do i
         U = changeOfBasis(s[i], μ[i])
@@ -100,7 +100,7 @@ MPS(ρ::MPO, s)
 
 Combine the in and out indices of an DMPO to make an MPS
 """
-function ITensors.MPS(ρ::MPO, μ::Vector{<:Index})::MPS
+function ITensorMPS.MPS(ρ::MPO, μ::Vector{<:Index})::MPS
     s = siteinds(first, ρ; plev=0)
     newdata = map(eachindex(ρ)) do i
         U = changeOfBasis(s[i], μ[i])
@@ -109,7 +109,7 @@ function ITensors.MPS(ρ::MPO, μ::Vector{<:Index})::MPS
     MPS(newdata, ρ.llim, ρ.rlim)
 end
 
-# Fermion Operator Site Type
+# FermionOperator Site Type
 changeOfBasisTensors(::SiteType"FermionOperator", x::Index) =
     [
      1/√2 * op("Id", x),
@@ -129,6 +129,62 @@ ITensors.state(::StateName"InfTemp", ::SiteType"FermionOperator") = [1,  0,  0, 
 ITensors.state(::StateName"Emp",     ::SiteType"FermionOperator") = [1,  1,  0,  0]
 ITensors.state(::StateName"Occ",     ::SiteType"FermionOperator") = [1, -1,  0,  0]
 
+
+tracer(::SiteType"Fermion", x::Index) = delta(dag(x), x')
+tracer(::SiteType"FermionOperator", x::Index) = state(dag(x), 1)
+
+
+# ElectronOperator Site Type
+changeOfBasisTensors(::SiteType"ElectronOperator", x::Index) = let pl=plev(x), x_=noprime(x)
+    prime.([
+     1/2  * op("Id",        x_),
+     1/2  * op("F",         x_),
+     1/2  * op("F↑",        x_),
+     1/2  * op("F↓",        x_),
+     1/√2 * op("a↑",        x_),
+     1/√2 * op("a↑ * F",    x_),
+     1/√2 * op("a↓",        x_),
+     1/√2 * op("a↓ * F",    x_),
+     1/√2 * op("a†↑",       x_),
+     1/√2 * op("a†↑ * F",   x_),
+     1/√2 * op("a†↓",       x_),
+     1/√2 * op("a†↓ * F",   x_),
+            op("a↓ * a↑",   x_),
+            op("a†↓ * a†↑", x_),
+            op("a†↓ * a↑",  x_),
+            op("a↓ * a†↑",  x_)
+     ], pl)
+end
+
+ITensors.space(::SiteType"ElectronOperator"; conserve_qns=false) = conserve_qns ? [
+                                            QN(("Nf", 0,-1),("Sz", 0))=>4,
+
+                                            QN(("Nf",-1,-1),("Sz",-1))=>2,
+                                            QN(("Nf",-1,-1),("Sz", 1))=>2,
+                                            QN(("Nf", 1,-1),("Sz", 1))=>2,
+                                            QN(("Nf", 1,-1),("Sz",-1))=>2,
+
+                                            QN(("Nf",-2,-1),("Sz", 0))=>1,
+                                            QN(("Nf", 2,-1),("Sz", 0))=>1,
+                                            QN(("Nf", 0,-1),("Sz",-2))=>1,
+                                            QN(("Nf", 0,-1),("Sz", 2))=>1
+                                           ] : 16
+
+ITensors.state(::StateName"Id",      ::SiteType"ElectronOperator") = [j==1 ? 1 : 0 for j=1:16]
+ITensors.state(::StateName"InfTemp", ::SiteType"ElectronOperator") = [j==1 ? 1 : 0 for j=1:16]
+
+ITensors.state(::StateName"Emp", ::SiteType"ElectronOperator")  = [0.5, 0.5, 0.5, 0.5, zeros(12)...]
+ITensors.state(::StateName"Up", ::SiteType"ElectronOperator")   = [0.5,-0.5,-0.5, 0.5, zeros(12)...]
+ITensors.state(::StateName"Dn", ::SiteType"ElectronOperator")   = [0.5,-0.5, 0.5,-0.5, zeros(12)...]
+ITensors.state(::StateName"UpDn", ::SiteType"ElectronOperator") = [0.5, 0.5,-0.5,-0.5, zeros(12)...]
+ITensors.state(::StateName"0", st::SiteType"ElectronOperator")  = state(StateName("Emp"), st)
+ITensors.state(::StateName"↑", st::SiteType"ElectronOperator")  = state(StateName("Up"), st)
+ITensors.state(::StateName"↓", st::SiteType"ElectronOperator")  = state(StateName("Dn"), st)
+ITensors.state(::StateName"↑↓", st::SiteType"ElectronOperator") = state(StateName("UpDn"), st)
+
+tracer(::SiteType"Electron", x::Index) = delta(dag(x), x')
+tracer(::SiteType"ElectronOperator", x::Index) = state(dag(x), 1)
+
 # Pauli Operator Site Type
 changeOfBasisTensors(::SiteType"PauliOperator", x::Index) =
     [1/√2 * op("Id", x),
@@ -138,15 +194,53 @@ changeOfBasisTensors(::SiteType"PauliOperator", x::Index) =
 
 ITensors.space(::SiteType"PauliOperator") = 4
 
-ITensors.state(::StateName"Id", ::SiteType"PauliOperator") = [1.0, 0, 0, 0]
-ITensors.state(::StateName"X", ::SiteType"PauliOperator") = [0, 1.0, 0, 0]
-ITensors.state(::StateName"Y", ::SiteType"PauliOperator") = [0, 0, 1.0, 0]
-ITensors.state(::StateName"Z", ::SiteType"PauliOperator") = [0, 0, 0, 1.0]
-ITensors.state(::StateName"InfTemp", ::SiteType"PauliOperator") = [1.0, 0, 0, 0]
+ITensors.state(::StateName"Id", ::SiteType"PauliOperator")      = [1.0, 0, 0, 0]
+ITensors.state(::StateName"X", ::SiteType"PauliOperator")       =  [0, 1.0, 0, 0]
+ITensors.state(::StateName"Y", ::SiteType"PauliOperator")       =  [0, 0, 1.0, 0]
+ITensors.state(::StateName"Z", ::SiteType"PauliOperator")       =  [0, 0, 0, 1.0]
+ITensors.state(::StateName"↑", st::SiteType"PauliOperator")     = state(StateName("Up"), st)
+ITensors.state(::StateName"↓", st::SiteType"PauliOperator")     = state(StateName("Dn"), st)
+ITensors.state(::StateName"Up", ::SiteType"PauliOperator")      = [ 0.5, 0.5, 0., 0.]
+ITensors.state(::StateName"Dn", ::SiteType"PauliOperator")      = [ 0.5,-0.5, 0., 0.]
+ITensors.state(::StateName"InfTemp", st::SiteType"PauliOperator") = state(StateName("Id"), st)
+
+tracer(::SiteType"S=1/2",   x::Index) = delta(dag(x), x')
+tracer(::SiteType"PauliOperator", x::Index) = state(dag(x), 1)
 
 
 
 
+# QUDIT
+function changeOfBasisTensors(::SiteType"QuditOperator", x::Index)
+    function basis(n) # create an orthogonal basis starting with 1/√n [1,1,1,..]
+        ℬ = Vector[fill(1, n) / √(n)]
+        for i in 1:n-1
+            push!(ℬ, [ fill(1, i) ; [-i] ; fill(0, n - i - 1) ] / √(i+i^2))
+        end
+        ℬ
+    end
+
+    superbasis = vcat(map(sort(-dim(x)+1:dim(x)-1, by=abs)) do n
+        [diagm(n=>v) for v∈basis(dim(x)-abs(n))]
+    end...)
+
+    [op(V, x) for V∈superbasis]
+end
+
+function ITensors.space(::SiteType"QuditOperator"; conserve_qns=false, dim=3, qnname_number)
+    if conserve_qns
+        map(sort(-dim+1:dim-1, by=abs)) do i
+            QN(qnname_number, i) => dim - abs(i)
+        end
+    else
+        dims^2
+    end
+end
+
+ITensors.state(::StateName"InfTemp", ::SiteType"QuditOperator", x::Index) = [i==1 ? 1 : 0 for i in 1:dim(x)]
+
+
+tracer(::SiteType"QuditOperator", x::Index) = state(dag(x), 1)
 
 export
     superoperator,

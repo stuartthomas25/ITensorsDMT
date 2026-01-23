@@ -2,9 +2,11 @@ module ITensorsDMT
 
 using Random
 using ITensors
+using ITensorMPS
 using CUDA
 using LinearAlgebra
 abstract type TruncationMethod end
+
 
 
 # include("gpu.jl")

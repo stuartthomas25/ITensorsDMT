@@ -89,7 +89,7 @@ function spinval(ρ::MPO, opname::String)::Vector{Float64}
     localop(ρ, Os)
 end
 
-energy_density(ρ::ITensors.AbstractMPS, ham::Vector{ITensor}) = localop(ρ, ham)
+energy_density(ρ::ITensorMPS.AbstractMPS, ham::Vector{ITensor}) = localop(ρ, ham)
 
 """ Energy current operator"""
 current_operator(ham::Vector{ITensor}) = current_operator(ham, ham)
@@ -113,7 +113,7 @@ end
 current_operator(ham::Vector{ITensor}, O::ITensor) = current_operator(ham, [O])
 
 
-function entanglement_entropy(ψ₀::ITensors.AbstractMPS)::Vector{Float64}
+function entanglement_entropy(ψ₀::ITensorMPS.AbstractMPS)::Vector{Float64}
     N = length(ψ₀)
     ψ = deepcopy(ψ₀)
     S = Float64[]

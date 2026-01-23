@@ -2,6 +2,7 @@ export Models
 
 module Models
     using ITensors
+    using ITensorMPS
 
     function Ising(s::Vector{<:Index})::Vector{ITensor}
         map(1:length(s)-1) do j

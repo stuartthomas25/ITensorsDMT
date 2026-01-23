@@ -1,8 +1,15 @@
+
+################################################
+#         AUTOMATICALLY GENERATED FILE         #
+#              * DO NOT EDIT *                 #
+################################################
+
 isinteractive() && using Revise
 using Test
 using ITensors
+using ITensorMPS
 import Random
-using TEBD
+using ITensorsDMT
 using LinearAlgebra
 using Distributions: Uniform
 
@@ -15,14 +22,15 @@ end
     """
     Test that superoperator evolution is equivalent to normal evolution
     """
-    N = 10
+    N = 15
     s = siteinds("S=1/2", N)
     μ = siteinds("PauliOperator", N)
-    steps = 4
+    steps = 1
     τ = 0.5
     W = 0.3
 
-    for method in [DMT(), NaiveTruncation()]
+    # for method in [DMT(), NaiveTruncation()]
+    for method in [DMT()]#, NaiveTruncation()]
         mpo = MPO(s, [n==N÷2 ? "Z" : "Id" for n=1:N])
         mps = MPS(mpo, μ)
 
@@ -32,21 +40,39 @@ end
         mpo_gates = make_sweep( TA.ITensor, length(ham), τ) do (j,δt)
             exp(-1.0im * δt * ham[j])
         end
+        mpo_gates = [ exp(-1.0im * τ * ham[8]) ]
         mps_gates = make_sweep( TA.ITensor, length(ham), τ) do (j,δt)
             gate(ham[j], δt, μ)
         end
+        mps_gates = [ gate(ham[8], τ, μ) ]
 
+        cutoff = 0.0
         for i=1:steps
+            println("step")
             apply!(mpo_gates, mpo; apply_dag=true)
             apply!(mps_gates, mps, method)
+            @show linkdims(mpo)
+            truncate!(mpo; maxdim=16, cutoff=0.0)
+            @show linkdims(mpo)
+
+
+            mpo′ = MPO(mps, s)
+            normalize!(mpo)
+            normalize!(mpo′)
+            @show linkdims(mpo)
+            @show linkdims(mpo′)
+            # @show dot(mpo, mpo′) - 1
         end
 
         mpo′ = MPO(mps, s)
         normalize!(mpo)
         normalize!(mpo′)
 
+        # @test isapprox(dot(mpo, mpo′), 1; atol=1e-5)
+        @show dot(mpo, mpo′) - 1
         @test dot(mpo, mpo′) ≈ 1
     end
+
 end
 
 @testset "Identity" begin
@@ -88,7 +114,7 @@ end
     τ = 0.5
     ham = Models.TFIM(s; b=rand(Uniform(-W,W), N))
 
-    mpo = MPO(s, "Sy")
+    mpo = MPO(ComplexF64, s, "Sy")
     mps = MPS(mpo, μ)
 
     gates = make_sweep( TA.Order4, length(ham), τ) do (j,δt)
@@ -117,7 +143,7 @@ end
     ham = Models.TFIM(s; b=rand(Uniform(-W,W), N))
     clean_ham = Models.TFIM(s)
 
-    ψ = randomMPS(s)
+    ψ = random_mps(s)
     ρ₀ = MPS(outer(ψ', ψ), μ)
 
     ρ1, ρ2, ρ3 = [deepcopy(ρ₀) for _ in 1:3]
@@ -162,7 +188,7 @@ end
              TA.Order2,
              TA.Order4]
 
-    ρ₀ = MPS(MPO(s, "Sy"), μ)
+    ρ₀ = MPS(MPO(ComplexF64, s, "Sy"), μ)
     normalize!(ρ₀)
 
     mpos = map(algos) do algo
@@ -323,6 +349,9 @@ end
             for i=1:steps
                 apply!(gates, ρ, method; maxdim, cutoff)
             end
+            @show method
+            @show maximum(linkdims(ρ)) maxdim
+
 
             @test all(linkdims(ρ) .<= maxdim)
 

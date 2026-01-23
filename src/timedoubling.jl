@@ -8,6 +8,8 @@ Take the time-inverse
 Θ(ρ::MPS) = Θ(sitetype(ρ), ρ)
 
 Θ(::SiteType"FermionOperator", ρ::MPS) = conj(ρ)
+Θ(::SiteType"ElectronOperator", ρ::MPS) = conj(ρ)
+Θ(::SiteType"QuditOperator", ρ::MPS) = conj(ρ)
 
 """
 In the Pauli basis, flip the σ₂ component (since it is imaginary). Then take the complex conjugate
