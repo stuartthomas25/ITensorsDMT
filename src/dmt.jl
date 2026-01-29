@@ -1,23 +1,16 @@
 using LinearAlgebra
 using ITensors.NDTensors
-using ITensorMPS: setleftlim!, setrightlim!
+using ITensorMPS: set_leftlim!, set_rightlim!
 import Distributed
 
 struct DMT <: TruncationMethod end
 struct NaiveTruncation <: TruncationMethod end
 const iscu = NDTensors.iscu
 
-
-# const BlockSparseTensor = NDTensors.BlockSparseTensor
-# const DenseTensor = NDTensors.DenseTensor
-# const Dense = NDTensors.Dense
-
 # for generalizing `dmt` to dense matrices
 ITensors.blockview(T::DenseTensor, ::Block) = T
 ITensors.nzblocks(::DenseTensor) = [Block(1,1)]
-# const blockview = ITensors.blockview
 
-# const tensor = ITensors.tensor
 Base.one(::Type{ITensor}) = ITensor(1.)
 
 rank(S::AbstractVector{<:Number}, cutoff::Float64) = something( findfirst(x->abs(x)<cutoff, S), length(S) + 1) - 1
@@ -268,8 +261,8 @@ function apply!(o::ITensor, ρ::MPS, ::DMT; kwargs...)
     newρ = MPS(ψ)
 
     # following ITensors/mps/abstractmps.jl
-    setleftlim!(newρ, N - 1)
-    setrightlim!(newρ, N + 1)
+    set_leftlim!(newρ, N - 1)
+    set_rightlim!(newρ, N + 1)
     orthogonalize!(newρ, ns[end] - ns[1] + 1)
 
     ρ[ns[1]:ns[end]] = newρ
@@ -290,74 +283,6 @@ default to `NaiveTruncation`
 """
 apply!(gates::Vector{ITensor}, ψ::ITensorMPS.AbstractMPS; kwargs...) =
     apply!(gates, ψ, NaiveTruncation(); kwargs...)
-
-# dense DMT
-
-function qrDMT(x::ITensor)
-    μ = inds(x; tags="Site")[1]
-    α = inds(x; tags="Link")[1]
-    # A = Array(x, (α, μ))
-    A = array(perumte(x, (α, μ)))
-    res = qr(A)
-    m = ITensors.dim(α)
-    matT = typeof(A)
-    res.Q*matT(I,m,m), matT(res.R) # QR decomp is thin by default
-end
-
-
-# """ Overwrite the default `ITensors.replacebond!` to add a `dmt` option for `which_decomp` """
-# function ITensors.replacebond!(M::MPS, b::Int, phi::ITensor; kwargs...)
-#     ortho::String = get(kwargs, :ortho, "left")
-#     swapsites::Bool = get(kwargs, :swapsites, false)
-#     which_decomp::Union{String,Nothing} = get(kwargs, :which_decomp, nothing)
-#     normalize::Bool = get(kwargs, :normalize, false)
-
-#     indsMb = inds(M[b])
-#     if swapsites
-#         sb = siteind(M, b)
-#         sbp1 = siteind(M, b + 1)
-#         indsMb = replaceind(indsMb, sb, sbp1)
-#     end
-
-#     if which_decomp=="dmt"
-#         Msums = map(M) do T
-#             x = only(inds(T; tags="Site", plev=0))
-#             δ = tracer(x)
-#             length(inds(δ)) > 1 && throw("MPS must be in an operator basis.")
-#             T * δ
-#         end
-#         Lsum = foldl(*, Msums[1:b-1])
-#         Rsum = foldl(*, Msums[b+2:end])
-#         kw = filter(r->first(r)∈[:maxdim, :cutoff], kwargs)
-
-#         L, R, spec = dmt(phi, Lsum, Rsum; ortho, kw...)
-#     else
-#         L, R, spec = factorize(
-#             phi, indsMb; which_decomp=which_decomp, tags=tags(linkind(M, b)), kwargs...
-#                 )
-#     end
-
-#     leftlim = ITensorMPS.leftlim
-#     setleftlim! = ITensorMPS.setleftlim!
-#     rightlim = ITensorMPS.rightlim
-#     setrightlim! = ITensorMPS.setrightlim!
-#     M[b] = L
-#     M[b + 1] = R
-#     if ortho == "left"
-#         leftlim(M) == b - 1 && setleftlim!(M, leftlim(M) + 1)
-#         rightlim(M) == b + 1 && setrightlim!(M, rightlim(M) + 1)
-#         normalize && (M[b + 1] ./= norm(M[b + 1]))
-#     elseif ortho == "right"
-#         leftlim(M) == b && setleftlim!(M, leftlim(M) - 1)
-#         rightlim(M) == b + 2 && setrightlim!(M, rightlim(M) - 1)
-#         normalize && (M[b] ./= norm(M[b]))
-#     else
-#         error(
-#             "In replacebond!, got ortho = $ortho, only currently supports `left` and `right`."
-#         )
-#     end
-#     return spec
-# end
 
 export apply!,
        DMT,

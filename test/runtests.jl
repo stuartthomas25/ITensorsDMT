@@ -31,7 +31,7 @@ end
 
     # for method in [DMT(), NaiveTruncation()]
     for method in [DMT()]#, NaiveTruncation()]
-        mpo = MPO(s, [n==N÷2 ? "Z" : "Id" for n=1:N])
+        mpo = MPO(s, [n-1==N÷2 ? "Z" : "Id" for n=1:N])
         mps = MPS(mpo, μ)
 
         b = rand(Uniform(-W,W), N)
